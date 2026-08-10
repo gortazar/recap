@@ -98,6 +98,7 @@ func RunWith(args []string, stdout, stderr io.Writer, env Env) int {
 		asJSON   = fs.Bool("json", false, "print the report as JSON (a versioned public interface)")
 		confPath = fs.String("config", "", "read this config file instead of ~/.config/recap/config.toml")
 		noCache  = fs.Bool("no-cache", false, "re-read every transcript instead of using ~/.cache/recap")
+		showVer  = fs.Bool("version", false, "print the version, commit and build date, and exit")
 		useSmart = fs.Bool("smart", false, "have a model write the sentences; sends a short summary of each project to the Anthropic API (needs ANTHROPIC_API_KEY)")
 		verbose  = fs.Bool("v", false, "add a line per session under each project")
 		verbose2 = fs.Bool("verbose", false, "add a line per session under each project")
@@ -136,6 +137,11 @@ func RunWith(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	if !set["no-icons"] && cfg.Icons != nil {
 		opts.NoIcons = !*cfg.Icons
+	}
+
+	if *showVer {
+		printVersion(stdout)
+		return 0
 	}
 
 	if *legend {

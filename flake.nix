@@ -23,14 +23,27 @@
           ];
         };
 
+      # The single place the version lives in this repository. tools/release-build.sh reads
+      # it back out of here, and the release workflow refuses to publish a tag that
+      # disagrees with it.
+      version = "0.1";
+
       recapFor = pkgs: pkgs.buildGoModule {
         pname = "recap";
-        version = "0.1.0";
+        inherit version;
         src = sourceFor pkgs;
         # modernc.org/sqlite and its dependencies, for reading opencode's store. Update
         # this hash whenever go.sum changes: `nix build` prints the one it wanted.
         vendorHash = "sha256-5WaCZ29wuU/aP05IBHTM0WhELYrYoerGlIS3QxoXL5o=";
-        ldflags = [ "-s" "-w" ];
+        # Stamped so `recap --version` in a nix build says what it is. A flake built from
+        # a dirty tree has no rev, and says so rather than naming the wrong commit.
+        ldflags = [
+          "-s"
+          "-w"
+          "-X github.com/gortazar/recap/internal/cli.Version=${version}"
+          "-X github.com/gortazar/recap/internal/cli.Commit=${self.rev or "dirty"}"
+          "-X github.com/gortazar/recap/internal/cli.BuildDate=nix"
+        ];
         meta = {
           description = "One-line recap of what every local coding agent session was doing";
           mainProgram = "recap";
