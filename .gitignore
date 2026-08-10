@@ -1,0 +1,6 @@
+# nix build symlinks
+/result
+/result-*
+
+# tools/release-build.sh output
+/dist/
