@@ -16,11 +16,13 @@ type Liveness interface {
 	Liveness(agent session.Agent, dir string) session.Liveness
 }
 
-// Entry is one session with the two things recap computed about it.
+// Entry is one session with what recap computed about it: the status, the one-line sentence,
+// and the paragraph of what it did over the window.
 type Entry struct {
 	Session  *session.Session
 	Status   session.Status
 	Sentence string
+	Report   string
 }
 
 // Project is one line of output: everything that happened in one working directory.
@@ -67,6 +69,7 @@ func Build(sessions []*session.Session, live Liveness, now time.Time) []Project 
 			Session:  s,
 			Status:   st,
 			Sentence: session.Sentence(s, st),
+			Report:   session.Report(s, st, now),
 		})
 	}
 

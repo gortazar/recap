@@ -58,7 +58,9 @@ func TestReportsOneLinePerProject(t *testing.T) {
 	transcript(t, env.ClaudeProjects, "/home/user/git/alpha", "s1", time.Hour)
 	transcript(t, env.ClaudeProjects, "/home/user/git/beta", "s2", 30*time.Minute)
 
-	code, stdout, stderr := run(t, env)
+	// --no-report, because this is about the one line per project; the paragraph under it
+	// has its own tests.
+	code, stdout, stderr := run(t, env, "-no-report")
 	if code != 0 {
 		t.Fatalf("exit %d (stderr: %s)", code, stderr)
 	}
@@ -375,6 +377,42 @@ func TestSmartWithoutAKeySaysSo(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "alpha") {
 		t.Errorf("the report was withheld:\n%s", stdout)
+	}
+}
+
+// The answered question in PLAN.md chose option (b): the paragraph is the default, and
+// --no-report is how you get the old one-line report back.
+func TestParagraphIsOnByDefault(t *testing.T) {
+	env := testEnv(t)
+	transcript(t, env.ClaudeProjects, "/home/user/git/alpha", "s1", time.Hour)
+
+	_, stdout, _ := run(t, env)
+	if !strings.Contains(stdout, "no tool calls") {
+		t.Errorf("no paragraph in the default output:\n%s", stdout)
+	}
+
+	_, plain, _ := run(t, env, "-no-report")
+	if strings.Contains(plain, "no tool calls") {
+		t.Errorf("--no-report still printed a paragraph:\n%s", plain)
+	}
+	if !strings.Contains(plain, "alpha") {
+		t.Errorf("--no-report dropped the status line too:\n%s", plain)
+	}
+}
+
+func TestReportCanBeTurnedOffInTheConfigFileAndBackOnWithAFlag(t *testing.T) {
+	env := testEnv(t)
+	env.ConfigPath = configFile(t, "report = false\n")
+	transcript(t, env.ClaudeProjects, "/home/user/git/alpha", "s1", time.Hour)
+
+	_, stdout, _ := run(t, env)
+	if strings.Contains(stdout, "no tool calls") {
+		t.Errorf("report = false in the config file was ignored:\n%s", stdout)
+	}
+
+	_, stdout, _ = run(t, env, "-report")
+	if !strings.Contains(stdout, "no tool calls") {
+		t.Errorf("--report did not override report = false:\n%s", stdout)
 	}
 }
 

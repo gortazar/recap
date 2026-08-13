@@ -22,6 +22,12 @@ type Options struct {
 	NoIcons bool
 	// Verbose adds a line per session under each project.
 	Verbose bool
+	// NoReport suppresses the paragraph under each line, leaving the one-line report.
+	NoReport bool
+	// Width is the column to wrap paragraphs at. Zero means stdout is not a terminal, which
+	// is a fixed 80: a redirect should produce a stable file, and CI output should not
+	// depend on the runner's terminal.
+	Width int
 	// Icons overrides the glyph for individual statuses. Anything not named here keeps its
 	// built-in icon.
 	Icons map[session.Status]string
@@ -46,16 +52,83 @@ func Text(w io.Writer, projects []report.Project, opts Options) error {
 		if _, err := fmt.Fprintf(w, "%s %s (%s) -> %s\n", mark, shortName(p.Name), agentList(p.Agents), p.Lead.Sentence); err != nil {
 			return err
 		}
+
+		// The paragraph belongs to the line above it, one indent deeper. Without -v that is
+		// the project line, and the lead session speaks for the project as it does
+		// everywhere else.
 		if !opts.Verbose {
+			if err := writeReport(w, p.Lead.Report, indent, opts); err != nil {
+				return err
+			}
 			continue
 		}
 		for _, e := range p.Sessions {
-			if _, err := fmt.Fprintf(w, "    %s\n", sessionLine(e, opts.Now)); err != nil {
+			if _, err := fmt.Fprintf(w, "%s%s\n", indent, sessionLine(e, opts.Now)); err != nil {
+				return err
+			}
+			if err := writeReport(w, e.Report, indent+indent, opts); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// indent is one level. Session lines sit at one, their paragraphs at two.
+const indent = "    "
+
+// defaultWidth is what a paragraph wraps at when stdout is not a terminal.
+const defaultWidth = 80
+
+// minWidth stops a very narrow terminal from producing one word per line.
+const minWidth = 40
+
+// writeReport prints a paragraph under the line it belongs to: indented, wrapped, and
+// followed by a blank line, because several three-line paragraphs stacked without one are
+// unreadable.
+func writeReport(w io.Writer, text, prefix string, opts Options) error {
+	if opts.NoReport || text == "" {
+		return nil
+	}
+	width := opts.Width
+	if width <= 0 {
+		width = defaultWidth
+	}
+	if width < minWidth {
+		width = minWidth
+	}
+	for _, line := range wrap(text, width-len(prefix)) {
+		if _, err := fmt.Fprintf(w, "%s%s\n", prefix, line); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintln(w)
+	return err
+}
+
+// wrap breaks text on spaces at the given width. A word longer than the width — a path,
+// usually — is left to overflow rather than broken somewhere meaningless.
+func wrap(text string, width int) []string {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return nil
+	}
+	var (
+		lines []string
+		line  string
+	)
+	for _, word := range words {
+		switch {
+		case line == "":
+			line = word
+		case len([]rune(line))+1+len([]rune(word)) <= width:
+			line += " " + word
+		default:
+			lines = append(lines, line)
+			line = word
+		}
+	}
+	return append(lines, line)
 }
 
 // Legend prints the status vocabulary and the rule behind each icon.

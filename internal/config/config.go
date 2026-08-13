@@ -26,6 +26,8 @@ type Config struct {
 	Ignore []string
 	// Icons turns the status emoji on or off. Nil means "not set".
 	Icons *bool
+	// Report turns the paragraph under each line on or off. Nil means "not set".
+	Report *bool
 	// Icon overrides the glyph for individual statuses, keyed by status word
 	// (running, waiting, idle, interrupted, finished, unclear).
 	Icon map[string]string
@@ -141,6 +143,12 @@ func assign(cfg *Config, key, value string) error {
 			return fmt.Errorf("icons: expected true or false, got %s", value)
 		}
 		cfg.Icons = &b
+	case "report":
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("report: expected true or false, got %s", value)
+		}
+		cfg.Report = &b
 	default:
 		return fmt.Errorf("unknown setting %q", key)
 	}

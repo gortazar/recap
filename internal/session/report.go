@@ -39,7 +39,9 @@ func Report(s *Session, st Status, now time.Time) string {
 	if requests := requestsPhrase(a); requests != "" {
 		bodies = append(bodies, requests)
 	}
-	if work := workBody(a); work != "" {
+	// With no tool calls, the error sentence below already accounts for the turns, and
+	// "1 turn, no tool calls. 1 turn ended in an error." says turn twice.
+	if work := workBody(a); work != "" && !(a.Tools() == 0 && a.Errors > 0) {
 		bodies = append(bodies, work)
 	}
 

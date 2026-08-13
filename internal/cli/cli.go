@@ -46,6 +46,9 @@ type Env struct {
 	SmartEndpoint string
 	// APIKey authenticates --smart. Empty means --smart cannot run.
 	APIKey string
+	// Width is the terminal width paragraphs wrap at. Zero means stdout is not a terminal,
+	// which is a fixed 80 columns.
+	Width int
 	// ProcRoot is the process table, /proc by default.
 	ProcRoot string
 	// Roots limits which projects are reported. Empty means the user's home directory.
@@ -66,6 +69,7 @@ func DefaultEnv() Env {
 		ConfigPath:     config.DefaultPath(),
 		CachePath:      cache.DefaultPath(),
 		APIKey:         os.Getenv("ANTHROPIC_API_KEY"),
+		Width:          terminalWidth(),
 		ProcRoot:       proc.DefaultRoot,
 		Roots:          roots,
 		Now:            time.Now,
@@ -94,6 +98,8 @@ func RunWith(args []string, stdout, stderr io.Writer, env Env) int {
 		running  = fs.Bool("running", false, "only projects with something running right now")
 		root     = newRepeatable(fs, "root", "only report projects under this directory (repeatable)")
 		noIcons  = fs.Bool("no-icons", false, "print status words instead of emoji")
+		wantRep  = fs.Bool("report", true, "print a paragraph of what each session did")
+		noReport = fs.Bool("no-report", false, "leave the paragraph out, one line per project")
 		legend   = fs.Bool("legend", false, "explain the status vocabulary and exit")
 		asJSON   = fs.Bool("json", false, "print the report as JSON (a versioned public interface)")
 		confPath = fs.String("config", "", "read this config file instead of ~/.config/recap/config.toml")
@@ -134,9 +140,21 @@ func RunWith(args []string, stdout, stderr io.Writer, env Env) int {
 		NoIcons: *noIcons,
 		Verbose: *verbose || *verbose2,
 		Icons:   iconOverrides(cfg.Icon, stderr),
+		Width:   env.Width,
 	}
 	if !set["no-icons"] && cfg.Icons != nil {
 		opts.NoIcons = !*cfg.Icons
+	}
+
+	// --report and --no-report are the same switch from either side, so whichever the user
+	// actually typed wins over the config file, and over the other one's default.
+	switch {
+	case set["no-report"]:
+		opts.NoReport = *noReport
+	case set["report"]:
+		opts.NoReport = !*wantRep
+	case cfg.Report != nil:
+		opts.NoReport = !*cfg.Report
 	}
 
 	if *showVer {
@@ -335,6 +353,14 @@ func iconOverrides(icons map[string]string, stderr io.Writer) map[session.Status
 		out[st] = glyph
 	}
 	return out
+}
+
+// terminalWidth is the width to wrap paragraphs at, or zero when stdout is not a terminal.
+func terminalWidth() int {
+	if width, ok := render.TerminalWidth(os.Stdout); ok {
+		return width
+	}
+	return 0
 }
 
 // windowStart is when the report window opens: the point the readers collect activity from.
