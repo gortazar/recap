@@ -192,8 +192,6 @@ func TestReport(t *testing.T) {
 	}
 }
 
-// The paragraph must never claim something the transcript cannot show. This is the rule the
-// whole feature turns on, so it gets its own test rather than living in a comment.
 // "1 turn, no tool calls. 1 turn ended in an error." says turn twice; the error sentence
 // already accounts for them.
 func TestATurnThatOnlyErroredIsReportedOnce(t *testing.T) {
@@ -212,6 +210,8 @@ func TestATurnThatOnlyErroredIsReportedOnce(t *testing.T) {
 	}
 }
 
+// The paragraph must never claim something the transcript cannot show. This is the rule the
+// whole feature turns on, so it gets its own test rather than living in a comment.
 func TestReportNeverClaimsAResult(t *testing.T) {
 	s := Session{
 		LastActivity: clock(20, 0),
