@@ -18,7 +18,11 @@ import (
 
 // version is baked into the cache file. Bump it whenever a reader changes what it extracts,
 // so that entries written by an older recap are ignored rather than believed.
-const version = 1
+//
+// Version 2: 0.3 added session.Activity, which readers fill and 0.2 did not. Without this
+// bump an upgraded recap would print no paragraph for every session it had already seen —
+// and the tests would not have caught it, because they build a fresh cache every time.
+const version = 2
 
 // DefaultPath is where recap keeps its cache.
 func DefaultPath() string {
