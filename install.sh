@@ -71,11 +71,11 @@ else
     # not a parse error on an error body.
     body="$(curl -fsSL "$API_URL" 2>/dev/null)" || die "could not ask $API_URL for the latest release.
 If this is GitHub's rate limit (60 requests an hour per IP, unauthenticated), pin a version instead:
-  RECAP_VERSION=0.2 sh install.sh"
+  RECAP_VERSION=0.3 sh install.sh"
     version="$(printf '%s' "$body" | tr ',' '\n' | grep '"tag_name"' | head -1 |
         sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/')"
     [ -n "$version" ] || die "no published recap release found at $API_URL.
-If one exists, pin it: RECAP_VERSION=0.2 sh install.sh"
+If one exists, pin it: RECAP_VERSION=0.3 sh install.sh"
 fi
 
 name="recap_${version}_${os}_${arch}"

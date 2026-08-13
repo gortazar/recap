@@ -110,6 +110,10 @@ func workBody(a Activity) string {
 func toolsPhrase(a Activity) string {
 	top := a.TopTools(maxToolsNamed)
 	if len(top) == 1 {
+		// "1 tool call — all Bash" is odd; there is nothing for "all" to contrast with.
+		if top[0].Count == 1 {
+			return top[0].Name
+		}
 		return "all " + top[0].Name
 	}
 	parts := make([]string, 0, len(top))
@@ -139,7 +143,12 @@ func filesPhrase(a Activity) string {
 
 // endSentence says how the session stands now, in the same vocabulary as the status line.
 func endSentence(s *Session, st Status, now time.Time) string {
-	when := whenWords(s.LastActivity, now)
+	when, isClock := whenWords(s.LastActivity, now)
+	// "at 20:41" but "24h ago", never "at 24h ago".
+	at := when
+	if isClock {
+		at = "at " + when
+	}
 	switch st {
 	case StatusRunning:
 		return "Still going."
@@ -148,24 +157,25 @@ func endSentence(s *Session, st Status, now time.Time) string {
 	case StatusIdle:
 		return "Idle since " + when + "."
 	case StatusInterrupted:
-		return "Stopped mid-work at " + when + "."
+		return "Stopped mid-work " + at + "."
 	case StatusFinished:
-		return "Finished at " + when + "."
+		return "Finished " + at + "."
 	default:
 		return "Last seen " + when + "."
 	}
 }
 
 // whenWords is a clock time for something that happened today, and an age for anything
-// older: "20:41" three days later would be a lie by omission.
-func whenWords(t, now time.Time) string {
+// older: "20:41" three days later would be a lie by omission. The bool says which it is, so
+// the caller can put "at" in front of a time but not in front of an age.
+func whenWords(t, now time.Time) (string, bool) {
 	if t.IsZero() {
-		return "an unknown time"
+		return "an unknown time", false
 	}
 	if now.Sub(t) < 24*time.Hour {
-		return t.Format("15:04")
+		return t.Format("15:04"), true
 	}
-	return ageWords(now.Sub(t))
+	return ageWords(now.Sub(t)), false
 }
 
 func ageWords(d time.Duration) string {

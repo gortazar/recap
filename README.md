@@ -85,7 +85,7 @@ first release exists. Neither source route stamps the version: both report `dev`
 ### Check what you got
 
 ```sh
-recap --version      # recap 0.2 (commit 1a2b3c4, built 2026-08-10T09:00:00Z)
+recap --version      # recap 0.3 (commit 1a2b3c4, built 2026-08-13T21:00:00Z)
 ```
 
 A build nobody stamped says `recap dev (commit unknown, built unknown)`. That is a local
@@ -113,15 +113,48 @@ recap --legend           # what the icons mean
 recap --smart            # have a model write the sentences instead
 ```
 
-One line per project, most recently active first:
+One line per project, most recently active first, with a paragraph under it saying what
+happened while you were away:
 
 ```
 <icon> <project> (<agent>) -> <one-sentence recap>
+    <paragraph: what it was working on, what it did, how it ended>
+```
+
+For example:
+
+```
+🟡 aideas (Claude Code) -> Asked to "Done, run another cycle" — answered, waiting for you.
+    Over 4h: 5 requests, ending "Done, run another cycle". 37 tool calls —
+    mostly Bash (22), Edit (11), Monitor (3) — touching AGENTS.md,
+    orchestrator.py and 1 other file. 1 turn ended in an error. Waiting since
+    20:56.
 ```
 
 Several sessions in one directory collapse into one line, and the busiest of them decides
 what that line says — a project with something still running is never reported as idle.
-`-v` breaks it back out into a line per session.
+`-v` breaks it back out into a line per session, each with its own paragraph.
+
+### The paragraph
+
+It covers the **report window** — the same one `--since` sets, 24 hours by default — so
+`recap` answers "what happened while I was away" and `recap --since 2d` widens both the
+report and the paragraphs together.
+
+It says only what a transcript can show: requests, tool calls, files, turns, errors,
+timings. It never claims a result. "Ran the test suite" is not something a transcript
+proves; "ran `go test` eleven times" is. A test enforces exactly that.
+
+Two things it will tell you about itself:
+
+- **"Since 06:10 (earlier activity not read)"** — the session was busier than recap is
+  willing to read (1 MiB of transcript), so the counts start there rather than at the top
+  of the window. Better than implying it saw the whole day.
+- **"Nothing in the window; last active 3d ago."** — the session exists but did nothing in
+  the window. Never an empty block, never an invented summary.
+
+`--no-report` turns the paragraphs off and gives you back one line per project; `report =
+false` in the config file does the same permanently.
 
 ### Flags
 
@@ -139,6 +172,7 @@ what that line says — a project with something still running is never reported
 | `--legend` | print the status vocabulary |
 | `--config <path>` | use this config file |
 | `--no-cache` | re-read every transcript instead of using `~/.cache/recap` |
+| `--report`, `--no-report` | show or hide the paragraph under each line (shown by default) |
 | `--smart` | have a model write the sentences (see below) |
 
 ## What the icons mean
@@ -178,6 +212,7 @@ since  = "12h"                       # default time window
 roots  = ["~/git", "~/work"]         # only report projects under these
 ignore = ["~/git/scratch"]           # ...except these
 icons  = true                        # false is the same as always passing --no-icons
+report = true                        # false is the same as always passing --no-report
 smart_model = "claude-sonnet-5"      # which model --smart asks
 
 [icon]                               # override individual glyphs
@@ -227,7 +262,18 @@ carries a schema version and is always a document, even when there is nothing to
           "last_activity": "2026-08-09T18:49:55Z",
           "last_tool": "Bash",
           "last_file": "/home/user/git/orchestrator/Makefile",
-          "source": "/home/user/.claude/projects/-home-user-git-orchestrator/aaaa1111.jsonl"
+          "source": "/home/user/.claude/projects/-home-user-git-orchestrator/aaaa1111.jsonl",
+          "report": "Over 4h: 5 requests, ending \"run the benchmark suite\". 37 tool calls — mostly Bash (22), Edit (11), Monitor (3) — touching Makefile and 2 other files. Waiting since 20:56.",
+          "activity": {
+            "tool_counts": {"Bash": 22, "Edit": 11, "Monitor": 3},
+            "files": ["Makefile", "bench.go", "README.md"],
+            "requests": ["start the benchmark", "run the benchmark suite"],
+            "turns": 18,
+            "errors": 1,
+            "window_start": "2026-08-09T16:35:00Z",
+            "window_end": "2026-08-09T18:49:55Z",
+            "truncated": false
+          }
         }
       ]
     }
@@ -244,12 +290,18 @@ Guarantees for consumers of version 1:
 - `liveness` is `process-table` or `unavailable`. When it is `unavailable`, an `unclear`
   status means "recap could not check", not "the session is odd".
 - Fields marked optional in the example (`title`, `branch`, `model`, `last_tool`,
-  `last_file`, `todo_done`, `todo_total`, `unreadable`) may be absent.
+  `last_file`, `todo_done`, `todo_total`, `unreadable`, `report`, `activity`) may be absent.
+- **The version bumps when a field is removed, renamed or changes meaning — never when an
+  optional one is added.** 0.3 added `report` and `activity` and deliberately left the
+  version at 1: everything a version-1 consumer read is still there and still means the
+  same, so bumping would only have made those consumers refuse a recap that works.
+- `activity.truncated` says recap stopped reading before the start of the window, so the
+  counts cover from `window_start` onwards and no earlier.
 
 ## `--smart`
 
-The sentences are assembled from the transcript by plain logic, which is instant, free and
-offline, but blunt. `--smart` has a model write them instead:
+The sentence and the paragraph are assembled from the transcript by plain logic, which is
+instant, free and offline, but blunt. `--smart` has a model write both instead:
 
 ```sh
 export ANTHROPIC_API_KEY=...
@@ -260,23 +312,29 @@ What this does and does not do:
 
 - **It sends a short summary of each project** — name, agent, status, the last request and
   the agent's last message (both clipped to 300 characters), the last tool, progress counts,
-  an age, and the sentence recap wrote itself. That is the whole list, and a test pins it.
-  No file contents, no tool output, no transcript, no paths into your store.
+  an age, the sentence and paragraph recap wrote itself, and the counts behind that
+  paragraph: the span, the tool counts, the file names, the turn and error counts. That is
+  the whole list, and a test pins it. No file contents, no tool output, no transcript, no
+  paths into your store.
 - **It never withholds the report.** No key, no network, a rate limit, a reply recap cannot
   parse: it says so on stderr and prints the plain sentences.
 - **It does not spawn an agent.** It is one HTTPS call to the Messages API, not a
   `claude -p` subprocess — running an agent to describe your agents would write a new
   session into the very store recap reads.
 - One request covers the whole report, so `--smart` costs one call regardless of how many
-  projects you have.
+  projects you have. Only each project's lead session is rewritten — a call per session
+  would turn one request into twenty.
 
 The model defaults to `claude-sonnet-5`; `smart_model` in the config file changes it.
 
 ## Speed and privacy
 
-- **Fast**: 156 ms cold and 11 ms warm across 25 projects on the machine it was built on,
-  against a 300 ms target. Transcripts reach tens of megabytes, so recap reads only the tail
-  of each, and caches what it parsed under `~/.cache/recap`, keyed on file size and mtime.
+- **Fast**: 290 ms cold and 11 ms warm across 25 projects on the machine it was built on.
+  Transcripts reach tens of megabytes, so recap reads backwards from the end of each only
+  until it has covered the window, and never more than 1 MiB — which is what keeps `--all`
+  at 310 ms rather than a second. It caches what it parsed under `~/.cache/recap`, keyed on
+  file size and mtime. (Before the paragraph existed, a fixed 512 KiB tail made this 156 ms;
+  reading a day instead of a tail is what the rest costs.)
 - **Side-effect free**: recap never writes to an agent's directories and never starts an
   agent. It uses the network only for `--smart`, which is opt-in.
 - **Local**: it reads only the current user's own files and prints only short summaries.
@@ -319,7 +377,7 @@ A human pushes the tag; nothing in CI creates one.
 3. Tag and push the tag:
 
    ```sh
-   git tag v0.2 && git push origin v0.2
+   git tag v0.3 && git push origin v0.3
    ```
 
 The `Release` workflow then checks the tag against `flake.nix`, builds the four tarballs and

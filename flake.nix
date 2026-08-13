@@ -26,7 +26,7 @@
       # The single place the version lives in this repository. tools/release-build.sh reads
       # it back out of here, and the release workflow refuses to publish a tag that
       # disagrees with it.
-      version = "0.2";
+      version = "0.3";
 
       recapFor = pkgs: pkgs.buildGoModule {
         pname = "recap";

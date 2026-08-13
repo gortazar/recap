@@ -135,6 +135,34 @@ func TestReport(t *testing.T) {
 				`200 tool calls — all Bash. Idle since 20:41.`,
 		},
 		{
+			name: "a single tool call is not \"all\" of anything",
+			s: Session{
+				LastActivity: clock(20, 0),
+				Activity: Activity{
+					ToolCounts: map[string]int{"Bash": 1},
+					Turns:      1,
+					First:      clock(19, 55),
+					Last:       clock(20, 0),
+				},
+			},
+			st:   StatusIdle,
+			want: `Over 5m: 1 tool call — Bash. Idle since 20:00.`,
+		},
+		{
+			name: "an old interrupted session is not stopped \"at\" an age",
+			s: Session{
+				LastActivity: reportNow.Add(-30 * time.Hour),
+				Activity: Activity{
+					ToolCounts: map[string]int{"Bash": 2},
+					Turns:      1,
+					First:      reportNow.Add(-31 * time.Hour),
+					Last:       reportNow.Add(-30 * time.Hour),
+				},
+			},
+			st:   StatusInterrupted,
+			want: `Over 1h: 2 tool calls — all Bash. Stopped mid-work 30h ago.`,
+		},
+		{
 			name: "nothing in the window is one honest short sentence",
 			s: Session{
 				LastActivity: reportNow.Add(-72 * time.Hour),

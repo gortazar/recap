@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
-<svg width="1208.71" height="165.86" xmlns="http://www.w3.org/2000/svg">
+<svg width="1208.71" height="472.29" xmlns="http://www.w3.org/2000/svg">
 <style>
 @font-face {
 	font-family: &apos;JetBrains Mono&apos;;
@@ -8,13 +8,30 @@
 	font-weight: normal;
 	font-style: normal;
 }
-</style><rect width="1208.71" height="165.86" fill="#282a36" x="0.00px" y="0.00px"/>
+</style><rect width="1208.71" height="472.29" fill="#282a36" x="0.00px" y="0.00px"/>
 <g font-family="JetBrains Mono" font-size="15.00px" fill="#f8f8f2" clip-path="url(#terminalMask)">
-<text x="24.00px" y="57.00px" xml:space="preserve">🟢 orchestrator (Claude Code) -&gt; Asked to &quot;Run the whole benchmark suite and report the regressions&quot; — working, last used Bash.
-</text><text x="24.00px" y="75.00px" xml:space="preserve">🟡 blog-pipeline (Claude Code) -&gt; Asked to &quot;Work out why first-user source is coming back as direct&quot; — answered, waiting for you.
-</text><text x="24.00px" y="93.00px" xml:space="preserve">🔴 ansible-ascent (Claude Code) -&gt; Asked to &quot;Start the container on the remote host over tailscale&quot; — interrupted mid-Bash.
-</text><text x="24.00px" y="111.00px" xml:space="preserve">🔴 gnome-tasks (Claude Code) -&gt; Asked to &quot;Rework the preferences window to use libadwaita&quot; — you interrupted it.
-</text><text x="24.00px" y="129.00px" xml:space="preserve">⚪ vacations (Claude Code) -&gt; Asked to &quot;Write the accrual rules down as a markdown table&quot; — done for now, nothing running.
+<text x="24.00px" y="57.00px" xml:space="preserve">🟢 orchestrator (Claude Code) -&gt; Asked to &quot;Make the release workflow verify the checksum&quot; — working, last used Bash.
+</text><text x="24.00px" y="75.00px" xml:space="preserve">    Over 3h: 2 requests, ending &quot;Make the release workflow verify the checksum&quot;.
+</text><text x="24.00px" y="93.00px" xml:space="preserve">    15 tool calls — mostly Bash (8), Edit (4), Read (2) — touching
+</text><text x="24.00px" y="111.00px" xml:space="preserve">    release-build.sh, install.sh and 3 other files. Still going.
+</text><text x="24.00px" y="129.00px" xml:space="preserve">
+</text><text x="24.00px" y="147.00px" xml:space="preserve">🟡 blog-pipeline (Claude Code) -&gt; Asked to &quot;Work out why first-user source is coming back as direct&quot; — answered, waiting for you.
+</text><text x="24.00px" y="165.00px" xml:space="preserve">    Over 1h: one request, &quot;Work out why first-user source is coming back as
+</text><text x="24.00px" y="183.00px" xml:space="preserve">    direct&quot;. 6 tool calls — Read (3), Bash (2), Edit (1) — touching tags.js and
+</text><text x="24.00px" y="201.00px" xml:space="preserve">    gtm.json. Waiting since 21:00.
+</text><text x="24.00px" y="219.00px" xml:space="preserve">
+</text><text x="24.00px" y="237.00px" xml:space="preserve">🔴 ansible-ascent (Claude Code) -&gt; Asked to &quot;Start the container on the remote host over tailscale&quot; — interrupted mid-Bash.
+</text><text x="24.00px" y="255.00px" xml:space="preserve">    Over 16m: one request, &quot;Start the container on the remote host over
+</text><text x="24.00px" y="273.00px" xml:space="preserve">    tailscale&quot;. 1 tool call — Bash. Stopped mid-work at 10:30.
+</text><text x="24.00px" y="291.00px" xml:space="preserve">
+</text><text x="24.00px" y="309.00px" xml:space="preserve">🔴 gnome-tasks (Claude Code) -&gt; Asked to &quot;Rework the preferences window to use libadwaita&quot; — you interrupted it.
+</text><text x="24.00px" y="327.00px" xml:space="preserve">    Over 33m: one request, &quot;Rework the preferences window to use libadwaita&quot;. 1
+</text><text x="24.00px" y="345.00px" xml:space="preserve">    turn, no tool calls. Stopped mid-work 24h ago.
+</text><text x="24.00px" y="363.00px" xml:space="preserve">
+</text><text x="24.00px" y="381.00px" xml:space="preserve">⚪ vacations (Claude Code) -&gt; Asked to &quot;Write the accrual rules down as a markdown table&quot; — done for now, nothing running.
+</text><text x="24.00px" y="399.00px" xml:space="preserve">    Over 16m: one request, &quot;Write the accrual rules down as a markdown table&quot;. 1
+</text><text x="24.00px" y="417.00px" xml:space="preserve">    turn, no tool calls. Idle since 33h ago.
+</text><text x="24.00px" y="435.00px" xml:space="preserve">
 </text>
 </g>
 <svg x="0.00px" y="0.00px"><circle cx="13.50" cy="12.00" r="5.50" fill="#FF5A54"/><circle cx="32.50" cy="12.00" r="5.50" fill="#E6BF29"/><circle cx="51.50" cy="12.00" r="5.50" fill="#52C12B"/></svg></svg>

@@ -54,6 +54,21 @@ def tool_result(cwd, sid, age, call_id, branch="main"):
                       {"type": "tool_result", "tool_use_id": call_id, "content": "ok"}]})
 
 
+def work(cwd, sid, start_age, step, calls):
+    """A run of tool calls and their results, oldest first, for the paragraph to count."""
+    records = []
+    age = start_age
+    for i, (tool, path) in enumerate(calls):
+        call_id = f"{sid}-w{i}"
+        inp = {"command": "make check"} if path is None else {"file_path": f"{cwd}/{path}"}
+        records.append(assistant(cwd, sid, age, [
+            {"type": "tool_use", "id": call_id, "name": tool, "input": inp}]))
+        age -= step // 2
+        records.append(tool_result(cwd, sid, age, call_id))
+        age -= step // 2
+    return records
+
+
 def write_session(store, project_dir, sid, records):
     escaped = project_dir.replace("/", "-")
     dest = os.path.join(store, escaped)
@@ -75,10 +90,18 @@ def main():
         return path
 
     # Running: a live agent lives in this directory (tools/screenshot.sh starts one) and the
-    # transcript grew seconds ago.
+    # transcript grew seconds ago. It also has a day's worth of work behind it, so the
+    # paragraph under it has something to count.
     d = project("orchestrator")
     write_session(store, d, "aaaa1111", [
-        user_text(d, "aaaa1111", 900, "Run the whole benchmark suite and report the regressions"),
+        user_text(d, "aaaa1111", 14400, "Start on the release workflow"),
+        *work(d, "aaaa1111", 14000, 200, [
+            ("Bash", None), ("Read", "release-build.sh"), ("Bash", None),
+            ("Edit", "release-build.sh"), ("Bash", None), ("Edit", "install.sh"),
+            ("Bash", None), ("Read", "flake.nix"), ("Bash", None), ("Edit", "install.sh"),
+            ("Bash", None), ("Write", "release.yml"), ("Bash", None), ("Edit", "ci.yml"),
+        ]),
+        user_text(d, "aaaa1111", 900, "Make the release workflow verify the checksum"),
         assistant(d, "aaaa1111", 20, [{"type": "tool_use", "id": "t1", "name": "Bash",
                                        "input": {"command": "make bench"}}]),
         tool_result(d, "aaaa1111", 5, "t1"),
@@ -88,6 +111,10 @@ def main():
     d = project("blog-pipeline")
     write_session(store, d, "bbbb2222", [
         user_text(d, "bbbb2222", 5400, "Work out why first-user source is coming back as direct"),
+        *work(d, "bbbb2222", 5200, 400, [
+            ("Read", "tags.js"), ("Bash", None), ("Read", "tags.js"), ("Edit", "tags.js"),
+            ("Bash", None), ("Read", "gtm.json"),
+        ]),
         assistant(d, "bbbb2222", 1200, [{"type": "text",
                                          "text": "Two of the three tags are wrong. Do you want me to fix the "
                                                  "template or the tag manager trigger?"}]),
