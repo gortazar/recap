@@ -52,6 +52,21 @@
     in
     {
       devShells = forAllSystems (pkgs: {
+        # Everything the release and install path needs, and nothing else: CI uses this
+        # rather than the full dev shell, which would have it fetch gopls, a screenshot
+        # renderer and a Python it has no use for.
+        release = pkgs.mkShell {
+          packages = with pkgs; [
+            go
+            git # release-build.sh stamps the commit and takes the date from it
+            gnutar # --sort/--mtime/--numeric-owner, for reproducible archives
+            gzip
+            coreutils # sha256sum, install
+            curl # install.sh, and its tests
+            shellcheck # tools/lint-shell.sh
+          ];
+        };
+
         default = pkgs.mkShell {
           packages = with pkgs; [
             go

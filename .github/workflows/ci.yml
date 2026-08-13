@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v31
+      - uses: cachix/install-nix-action@v27
         with:
           extra_nix_config: "experimental-features = nix-command flakes"
 
@@ -19,11 +19,11 @@ jobs:
       # just "builder failed with exit code 1".
       - run: nix flake check --print-build-logs
 
-      - run: nix develop -c tools/lint-shell.sh
-      - run: nix develop -c tools/check_release_version_test.sh
+      - run: nix develop .#release -c tools/lint-shell.sh
+      - run: nix develop .#release -c tools/check_release_version_test.sh
 
       # The heavier shell suites run here rather than inside the flake sandbox: the
       # four-target cross-build has no module cache in there, and install_test.sh wants a
       # writable temp directory and a real curl.
-      - run: nix develop -c tools/release_build_test.sh
-      - run: nix develop -c tools/install_test.sh
+      - run: nix develop .#release -c tools/release_build_test.sh
+      - run: nix develop .#release -c tools/install_test.sh

@@ -27,7 +27,7 @@ jobs:
       # tools/release-build.sh reads the commit and its date out of the checkout, both of
       # which the default single-commit fetch already provides.
       - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v31
+      - uses: cachix/install-nix-action@v27
         with:
           extra_nix_config: "experimental-features = nix-command flakes"
 
@@ -35,13 +35,13 @@ jobs:
       # its tag is worse than no release.
       - name: Check the tag matches the recorded version
         if: startsWith(github.ref, 'refs/tags/')
-        run: nix develop -c tools/check-release-version.sh "${GITHUB_REF_NAME}"
+        run: nix develop .#release -c tools/check-release-version.sh "${GITHUB_REF_NAME}"
 
       - name: Build the release artefacts
-        run: nix develop -c tools/release-build.sh
+        run: nix develop .#release -c tools/release-build.sh
 
       - name: Check the artefacts
-        run: nix develop -c tools/release_build_test.sh
+        run: nix develop .#release -c tools/release_build_test.sh
 
       # A dry run stops here, with the artefacts attached to the run instead of to a
       # release. Nothing is published.
