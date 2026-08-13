@@ -1,0 +1,98 @@
+# Cut a release: build the four platform tarballs, publish them under the tag that
+# triggered this, and check the published one-liner actually installs.
+#
+# A human pushes the tag; nothing here creates one.
+#
+#   git tag v0.2 && git push origin v0.2
+#
+# workflow_dispatch runs everything except the publishing, so the whole path can be
+# exercised without a release existing.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# The only permission this needs. It is the repository's own GITHUB_TOKEN, which is why
+# recap lives in its own repository: a workflow in another repo could not do this without a
+# cross-repo secret.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # tools/release-build.sh reads the commit and its date out of the checkout, both of
+      # which the default single-commit fetch already provides.
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: "experimental-features = nix-command flakes"
+
+      # Before anything is built: a release whose binary reports a different number than
+      # its tag is worse than no release.
+      - name: Check the tag matches the recorded version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: nix develop -c tools/check-release-version.sh "${GITHUB_REF_NAME}"
+
+      - name: Build the release artefacts
+        run: nix develop -c tools/release-build.sh
+
+      - name: Check the artefacts
+        run: nix develop -c tools/release_build_test.sh
+
+      # A dry run stops here, with the artefacts attached to the run instead of to a
+      # release. Nothing is published.
+      - name: Upload artefacts (dry run)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: recap-dist
+          path: dist/
+
+      # gh is on the runner already; no third-party action gets a token here.
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "recap ${GITHUB_REF_NAME#v}" \
+            --generate-notes \
+            dist/*.tar.gz dist/SHA256SUMS
+
+  # The published one-liner, run against the release just created. This is also the only
+  # coverage the darwin artefacts get: they are cross-compiled and never run otherwise.
+  smoke:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Fetched from the tag being released rather than from a checkout, because the point
+      # is to fail if the *published* script or the *published* artefacts are wrong.
+      - name: Install with the published one-liner
+        env:
+          RECAP_VERSION: ${{ github.ref_name }}
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/install.sh" | sh
+
+      - name: Check it reports the version that was just released
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          reported="$("$HOME/.local/bin/recap" --version)"
+          echo "$reported"
+          case "$reported" in
+            "recap $expected "*) echo "ok: reports $expected" ;;
+            *) echo "expected 'recap $expected ...', got '$reported'" >&2; exit 1 ;;
+          esac
+
+      # And it should run on a machine that has never had an agent on it: no sessions is a
+      # report, not an error.
+      - name: Check it runs where no agent has ever run
+        run: "$HOME/.local/bin/recap --all"

@@ -61,9 +61,19 @@
             jq
             python3 # tools/scrub-*-fixture.py and tools/demo-store.py
             charm-freeze # tools/screenshot.sh renders the README screenshot
+
+            # The release and install path. Pinned here rather than taken from whatever the
+            # runner happens to have, so the archives come out identical on a laptop and in
+            # CI.
+            git # release-build.sh stamps the commit and takes the date from it
+            gnutar # --sort/--mtime/--numeric-owner, for reproducible archives
+            gzip
+            coreutils # sha256sum, install
+            curl # install.sh, and its tests
+            shellcheck # tools/lint-shell.sh
           ];
           shellHook = ''
-            echo "recap dev shell — go test ./... | go build ./cmd/recap"
+            echo "recap dev shell — go test ./... | go build ./cmd/recap | tools/lint-shell.sh"
           '';
         };
       });
