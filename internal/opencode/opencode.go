@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/gortazar/recap/internal/session"
@@ -18,9 +19,18 @@ import (
 	_ "modernc.org/sqlite" // pure-Go driver: no cgo, so recap stays a single static binary
 )
 
-// tailParts is how many of a session's most recent parts recap looks at. A session's state
-// is decided by its last few events; reading the whole conversation would be wasteful.
-const tailParts = 40
+const (
+	// tailParts is how many of a session's most recent parts recap looks at. A session's
+	// state is decided by its last few events, and the report window rarely needs more; it
+	// is the same kind of cap as the Claude reader's byte limit, and it is what stops a
+	// months-old session costing anything.
+	tailParts = 400
+
+	// maxFiles and maxRequests cap what one session contributes to the paragraph, and to
+	// the cache, which stores the whole Activity.
+	maxFiles    = 10
+	maxRequests = 5
+)
 
 // DefaultStore is where opencode keeps its database.
 func DefaultStore() string {
@@ -36,7 +46,10 @@ func DefaultStore() string {
 
 // Discover reads every top-level session from the store. A missing store is not an error:
 // it just means opencode was never used here.
-func Discover(dbPath string) ([]*session.Session, error) {
+// since bounds the Activity: only parts at or after it count towards what the session did.
+// A zero since means everything the cap allows. It does not affect the status, which always
+// comes from the end of the conversation.
+func Discover(dbPath string, since time.Time) ([]*session.Session, error) {
 	if dbPath == "" {
 		return nil, nil
 	}
@@ -60,7 +73,7 @@ func Discover(dbPath string) ([]*session.Session, error) {
 	for _, s := range sessions {
 		// One session failing to yield its detail must not lose the others, so the tail is
 		// best-effort: what it cannot read stays zero and the status rules cope.
-		readTail(db, s)
+		readTail(db, s, since)
 		readTodos(db, s)
 	}
 	return sessions, nil
@@ -135,12 +148,13 @@ type part struct {
 	role string
 	kind string
 	data []byte
+	at   time.Time
 }
 
 // readTail reads the last few parts of a session and works out what shape its end has.
-func readTail(db *sql.DB, s *session.Session) {
+func readTail(db *sql.DB, s *session.Session, since time.Time) {
 	rows, err := db.Query(`
-		SELECT message.data, part.data
+		SELECT message.data, part.data, part.time_created
 		FROM part JOIN message ON message.id = part.message_id
 		WHERE part.session_id = ?
 		ORDER BY part.time_created DESC, part.id DESC
@@ -155,7 +169,8 @@ func readTail(db *sql.DB, s *session.Session) {
 	var parts []part
 	for rows.Next() {
 		var messageData, partData []byte
-		if err := rows.Scan(&messageData, &partData); err != nil {
+		var created sql.NullInt64
+		if err := rows.Scan(&messageData, &partData, &created); err != nil {
 			continue
 		}
 		var msg struct {
@@ -166,15 +181,23 @@ func readTail(db *sql.DB, s *session.Session) {
 			Type string `json:"type"`
 		}
 		_ = json.Unmarshal(partData, &p)
-		parts = append(parts, part{role: msg.Role, kind: p.Type, data: partData})
+		parts = append(parts, part{role: msg.Role, kind: p.Type, data: partData, at: msTime(created)})
 	}
 	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
 		parts[i], parts[j] = parts[j], parts[i]
 	}
 
+	activity := newActivity()
 	var last *part
 	for i := range parts {
 		p := &parts[i]
+		// Whether this part counts towards "what did it do". A part with no timestamp
+		// cannot be placed in the window, so it is left out rather than guessed in.
+		inWindow := !p.at.IsZero() && (since.IsZero() || !p.at.Before(since))
+		if inWindow {
+			activity.saw(p.at)
+		}
+
 		switch p.kind {
 		case "text":
 			text := textOf(p.data)
@@ -185,6 +208,9 @@ func readTail(db *sql.DB, s *session.Session) {
 				s.LastRequest = text
 				if s.FirstRequest == "" {
 					s.FirstRequest = text
+				}
+				if inWindow {
+					activity.request(text)
 				}
 			} else {
 				s.LastText = text
@@ -197,13 +223,35 @@ func readTail(db *sql.DB, s *session.Session) {
 			if f := t.file(); f != "" {
 				s.LastFile = f
 			}
+			if inWindow {
+				activity.tool(t.Tool, t.file())
+				if t.State.Status == "error" {
+					activity.errors++
+				}
+			}
 		case "patch":
 			if f := firstPatchFile(p.data); f != "" {
 				s.LastFile = f
 			}
+			if inWindow {
+				activity.file(firstPatchFile(p.data))
+			}
+		case "step-finish":
+			// opencode records a step per model turn, which is the closest thing it has to
+			// the Claude reader's assistant turns.
+			if inWindow {
+				activity.turns++
+				if reasonOf(p.data) == "error" {
+					activity.errors++
+				}
+			}
 		}
 		last = p
 	}
+	// The cap is a fixed number of parts, so a session busier than that has activity older
+	// than what was read — the same honesty the Claude reader's byte cap needs.
+	activity.truncated = len(parts) == tailParts && !since.IsZero()
+	s.Activity = activity.result()
 
 	s.Tail = classifyTail(last)
 	if s.Tail == session.TailPendingTool && last != nil {
@@ -317,4 +365,80 @@ func msTime(v sql.NullInt64) time.Time {
 		return time.Time{}
 	}
 	return time.UnixMilli(v.Int64)
+}
+
+// activityBuilder accumulates what a session did over the window, capping the lists so a
+// long conversation cannot grow the cache without bound.
+type activityBuilder struct {
+	tools      map[string]int
+	fileCounts map[string]int
+	fileOrder  []string
+	requests   []string
+	turns      int
+	errors     int
+	first      time.Time
+	last       time.Time
+	truncated  bool
+}
+
+func newActivity() *activityBuilder {
+	return &activityBuilder{tools: map[string]int{}, fileCounts: map[string]int{}}
+}
+
+func (b *activityBuilder) saw(ts time.Time) {
+	if b.first.IsZero() || ts.Before(b.first) {
+		b.first = ts
+	}
+	if ts.After(b.last) {
+		b.last = ts
+	}
+}
+
+func (b *activityBuilder) tool(name, path string) {
+	if name != "" {
+		b.tools[name]++
+	}
+	b.file(path)
+}
+
+// file records a touch, by basename: a paragraph of absolute paths is unreadable, and the
+// full path is already on the session as LastFile.
+func (b *activityBuilder) file(path string) {
+	if path == "" {
+		return
+	}
+	name := filepath.Base(path)
+	if _, seen := b.fileCounts[name]; !seen {
+		b.fileOrder = append(b.fileOrder, name)
+	}
+	b.fileCounts[name]++
+}
+
+func (b *activityBuilder) request(text string) {
+	b.requests = append(b.requests, text)
+	if len(b.requests) > maxRequests {
+		b.requests = b.requests[len(b.requests)-maxRequests:]
+	}
+}
+
+func (b *activityBuilder) result() session.Activity {
+	// Most-touched first, ties broken by the order they were first seen, so two runs over
+	// the same store produce the same paragraph.
+	files := append([]string(nil), b.fileOrder...)
+	sort.SliceStable(files, func(i, j int) bool {
+		return b.fileCounts[files[i]] > b.fileCounts[files[j]]
+	})
+	if len(files) > maxFiles {
+		files = files[:maxFiles]
+	}
+	return session.Activity{
+		Requests:   b.requests,
+		ToolCounts: b.tools,
+		Files:      files,
+		Turns:      b.turns,
+		Errors:     b.errors,
+		First:      b.first,
+		Last:       b.last,
+		Truncated:  b.truncated,
+	}
 }

@@ -217,7 +217,7 @@ func RunWith(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	sessions = append(sessions, claudeSessions...)
 
-	opencodeSessions, err := opencode.Discover(env.OpencodeStore)
+	opencodeSessions, err := opencode.Discover(env.OpencodeStore, windowStart(filters, opts.Now))
 	if err != nil {
 		fmt.Fprintln(stderr, "recap: reading opencode sessions:", err)
 	}

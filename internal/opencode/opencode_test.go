@@ -35,7 +35,7 @@ func store(t *testing.T, fixtures ...string) string {
 
 func discover(t *testing.T, path string) map[string]*session.Session {
 	t.Helper()
-	sessions, err := Discover(path)
+	sessions, err := Discover(path, time.Time{})
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -147,11 +147,76 @@ func TestUnexpectedFieldShapesDoNotLoseTheSession(t *testing.T) {
 }
 
 func TestMissingStoreIsNotAnError(t *testing.T) {
-	sessions, err := Discover(filepath.Join(t.TempDir(), "no-opencode-here.db"))
+	sessions, err := Discover(filepath.Join(t.TempDir(), "no-opencode-here.db"), time.Time{})
 	if err != nil {
 		t.Fatalf("Discover of a missing store: %v", err)
 	}
 	if len(sessions) != 0 {
 		t.Errorf("found %d sessions in a missing store", len(sessions))
+	}
+}
+
+func TestActivityFromARealSession(t *testing.T) {
+	s := discover(t, store(t, "real-store.sql"))["ses_0243c909effe63ZZpnGRyPNoZE"]
+	if s == nil {
+		t.Fatal("the session from the real store is missing")
+	}
+	a := s.Activity
+
+	// Three model turns, each ending in a step-finish, and two tool calls.
+	if got, want := a.Turns, 4; got != want {
+		t.Errorf("Turns = %d, want %d", got, want)
+	}
+	if got, want := a.ToolCounts["glob"], 2; got != want {
+		t.Errorf("ToolCounts[glob] = %d, want %d", got, want)
+	}
+	if got, want := a.ToolCounts["write"], 1; got != want {
+		t.Errorf("ToolCounts[write] = %d, want %d", got, want)
+	}
+	if got, want := len(a.Requests), 1; got != want {
+		t.Errorf("Requests = %v, want %d", a.Requests, want)
+	}
+	if len(a.Files) == 0 || a.Files[0] != "docker-compose.yml" {
+		t.Errorf("Files = %v, want the file it wrote", a.Files)
+	}
+	if a.First.IsZero() || a.Last.IsZero() {
+		t.Errorf("First/Last = %v/%v, want the timestamps actually seen", a.First, a.Last)
+	}
+	if a.Truncated {
+		t.Error("Truncated is set for a session read whole")
+	}
+}
+
+// The same rule as the Claude reader: the window bounds what the session is reported to have
+// done, and nothing else.
+func TestOpencodeActivityIsLimitedToTheWindow(t *testing.T) {
+	path := store(t, "real-store.sql")
+
+	future, err := Discover(path, time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(future) != 1 {
+		t.Fatalf("found %d sessions, want 1", len(future))
+	}
+	if !future[0].Activity.Empty() {
+		t.Errorf("Activity = %+v, want empty for a window after everything happened", future[0].Activity)
+	}
+	if future[0].Tail != session.TailAssistantText {
+		t.Errorf("Tail = %v, want the tail shape to survive an empty window", future[0].Tail)
+	}
+}
+
+func TestOpencodeActivityCountsAToolError(t *testing.T) {
+	s := discover(t, store(t, "states.sql"))["ses_pending"]
+	if s == nil {
+		t.Fatal("ses_pending is missing")
+	}
+	// A tool still running is not an error, and must not be counted as one.
+	if got, want := s.Activity.Errors, 0; got != want {
+		t.Errorf("Errors = %d, want %d for a tool that never finished", got, want)
+	}
+	if got, want := s.Activity.ToolCounts["bash"], 1; got != want {
+		t.Errorf("ToolCounts[bash] = %d, want %d", got, want)
 	}
 }
