@@ -42,19 +42,41 @@ type Facts struct {
 	Progress    string `json:"progress,omitempty"`
 	Age         string `json:"age,omitempty"`
 	Heuristic   string `json:"heuristic_sentence"`
+
+	// What the session did over the report window, for the paragraph. Counts and names
+	// only — still nothing from tool output or file contents.
+	Span            string   `json:"span,omitempty"`
+	Tools           string   `json:"tools,omitempty"`
+	Files           []string `json:"files,omitempty"`
+	Turns           int      `json:"turns,omitempty"`
+	Errors          int      `json:"errors,omitempty"`
+	HeuristicReport string   `json:"heuristic_report,omitempty"`
 }
 
-const systemPrompt = `You rewrite one-line status summaries for "recap", a command that tells a
+// Rewritten is what the model gives back for one project: the status line and the paragraph
+// under it.
+type Rewritten struct {
+	Sentence string `json:"sentence"`
+	Report   string `json:"report"`
+}
+
+const systemPrompt = `You rewrite status summaries for "recap", a command that tells a
 developer what their coding agents were doing.
 
-You are given a JSON array of facts, one entry per project, each with the blunt sentence
-recap generated itself. Rewrite each into one natural sentence of at most 120 characters.
+You are given a JSON array of facts, one entry per project, each with the blunt sentence and
+paragraph recap generated itself. For each, write:
+
+- "sentence": one natural sentence of at most 120 characters — what it was asked to do and
+  where it stands.
+- "report": two or three sentences about what the session did over the window, from the
+  span, tools, files, turns and errors given.
 
 Rules:
-- Reply with a JSON array of strings and nothing else. Same length as the input, same order.
+- Reply with a JSON array of objects, each with exactly "sentence" and "report", and nothing
+  else. Same length as the input, same order.
 - Say only what the facts support. Never invent a cause, a file, an error or a result. If a
-  session was interrupted, you do not know why.
-- Keep the two beats of the heuristic sentence: what it was asked to do, and where it stands.
+  session was interrupted, you do not know why. Counting tool calls is a fact; concluding
+  the tests now pass is not.
 - Plain past/present tense, no marketing, no exclamation marks, no emoji.`
 
 // Client talks to the Messages API. The zero value is not usable; use New.
@@ -101,8 +123,8 @@ type response struct {
 	} `json:"error"`
 }
 
-// Sentences returns one rewritten sentence per set of facts, in the same order.
-func (c *Client) Sentences(ctx context.Context, facts []Facts) ([]string, error) {
+// Rewrite returns one rewritten sentence and paragraph per set of facts, in the same order.
+func (c *Client) Rewrite(ctx context.Context, facts []Facts) ([]Rewritten, error) {
 	if len(facts) == 0 {
 		return nil, nil
 	}
@@ -116,8 +138,9 @@ func (c *Client) Sentences(ctx context.Context, facts []Facts) ([]string, error)
 	}
 	body, err := json.Marshal(request{
 		Model: c.Model,
-		// Roughly 40 tokens a sentence, plus the JSON around them.
-		MaxTokens: 60*len(facts) + 200,
+		// Roughly 40 tokens for the sentence and 120 for the paragraph, plus the JSON
+		// around them.
+		MaxTokens: 220*len(facts) + 200,
 		System:    systemPrompt,
 		Messages:  []message{{Role: "user", Content: string(payload)}},
 	})
@@ -160,32 +183,38 @@ func (c *Client) Sentences(ctx context.Context, facts []Facts) ([]string, error)
 			text.WriteString(block.Text)
 		}
 	}
-	sentences, err := parseSentences(text.String())
+	out, err := parseRewrites(text.String())
 	if err != nil {
 		return nil, err
 	}
-	if len(sentences) != len(facts) {
-		return nil, fmt.Errorf("model returned %d sentences for %d projects", len(sentences), len(facts))
+	if len(out) != len(facts) {
+		return nil, fmt.Errorf("model returned %d entries for %d projects", len(out), len(facts))
 	}
-	return sentences, nil
+	return out, nil
 }
 
-// parseSentences pulls the JSON array out of the reply. Models sometimes wrap it in a code
-// fence or a line of preamble, which is not worth failing over.
-func parseSentences(text string) ([]string, error) {
+// parseRewrites pulls the JSON array out of the reply. Models sometimes wrap it in a code
+// fence or a line of preamble, which is not worth failing over — but the shape inside is
+// checked strictly, because a half-parsed reply would put the model's idea of a paragraph
+// somewhere recap promises only facts.
+func parseRewrites(text string) ([]Rewritten, error) {
 	start := strings.Index(text, "[")
 	end := strings.LastIndex(text, "]")
 	if start < 0 || end < start {
 		return nil, fmt.Errorf("model did not return a JSON array")
 	}
-	var out []string
+	var out []Rewritten
 	if err := json.Unmarshal([]byte(text[start:end+1]), &out); err != nil {
-		return nil, fmt.Errorf("model did not return a JSON array of strings")
+		return nil, fmt.Errorf("model did not return a JSON array of {sentence, report} objects")
 	}
-	for i, s := range out {
-		out[i] = strings.TrimSpace(s)
-		if out[i] == "" {
+	for i := range out {
+		out[i].Sentence = strings.TrimSpace(out[i].Sentence)
+		out[i].Report = strings.TrimSpace(out[i].Report)
+		if out[i].Sentence == "" {
 			return nil, fmt.Errorf("model returned an empty sentence")
+		}
+		if out[i].Report == "" {
+			return nil, fmt.Errorf("model returned an empty report")
 		}
 	}
 	return out, nil

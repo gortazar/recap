@@ -319,12 +319,12 @@ func TestAGrownTranscriptIsNotServedFromTheCache(t *testing.T) {
 	}
 }
 
-func TestSmartReplacesTheSentences(t *testing.T) {
+func TestSmartReplacesTheSentenceAndTheParagraph(t *testing.T) {
 	var sent []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sent, _ = io.ReadAll(r.Body)
 		w.Header().Set("content-type", "application/json")
-		io.WriteString(w, `{"content":[{"type":"text","text":"[\"Ran the suite and stopped for the night.\"]"}]}`)
+		io.WriteString(w, `{"content":[{"type":"text","text":"[{\"sentence\":\"Ran the suite and stopped for the night.\",\"report\":\"One request, then eleven Bash calls over ten minutes.\"}]"}]}`)
 	}))
 	defer srv.Close()
 
@@ -336,6 +336,9 @@ func TestSmartReplacesTheSentences(t *testing.T) {
 	_, stdout, stderr := run(t, env, "-smart")
 	if !strings.Contains(stdout, "Ran the suite and stopped for the night.") {
 		t.Errorf("the model's sentence was not used:\n%s\n%s", stdout, stderr)
+	}
+	if !strings.Contains(stdout, "eleven Bash calls") {
+		t.Errorf("the model's paragraph was not used:\n%s\n%s", stdout, stderr)
 	}
 	if !strings.Contains(string(sent), "alpha") {
 		t.Errorf("the project facts were not sent: %s", sent)
@@ -358,6 +361,9 @@ func TestSmartFallsBackToThePlainSentences(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "Asked to") {
 		t.Errorf("the plain sentence was not printed:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "no tool calls") {
+		t.Errorf("the plain paragraph was not printed either:\n%s", stdout)
 	}
 	if !strings.Contains(stderr, "--smart") {
 		t.Errorf("stderr = %q, want it to explain that --smart failed", stderr)

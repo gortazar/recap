@@ -37,16 +37,19 @@ func serve(t *testing.T, status int, body string) (*Client, *[]byte, *http.Heade
 	return c, &seen, &headers
 }
 
-func TestRewritesEverySentence(t *testing.T) {
+func TestRewritesEverySentenceAndParagraph(t *testing.T) {
 	c, seen, headers := serve(t, http.StatusOK,
-		`{"content":[{"type":"text","text":"[\"Ran the suite; still going.\",\"Was deploying; the shell command never finished.\"]"}]}`)
+		`{"content":[{"type":"text","text":"[{\"sentence\":\"Ran the suite; still going.\",\"report\":\"Twelve Bash calls over an hour.\"},{\"sentence\":\"Was deploying; the shell command never finished.\",\"report\":\"Four Bash calls, then nothing.\"}]"}]}`)
 
-	got, err := c.Sentences(context.Background(), facts())
+	got, err := c.Rewrite(context.Background(), facts())
 	if err != nil {
-		t.Fatalf("Sentences: %v", err)
+		t.Fatalf("Rewrite: %v", err)
 	}
-	if len(got) != 2 || got[0] != "Ran the suite; still going." {
-		t.Errorf("sentences = %q", got)
+	if len(got) != 2 || got[0].Sentence != "Ran the suite; still going." {
+		t.Errorf("rewrites = %+v", got)
+	}
+	if got[0].Report != "Twelve Bash calls over an hour." {
+		t.Errorf("report = %q, want the paragraph the model wrote", got[0].Report)
 	}
 
 	if headers.Get("x-api-key") != "test-key" {
@@ -77,13 +80,13 @@ func TestRewritesEverySentence(t *testing.T) {
 // The prompt asks for bare JSON, but models wrap things; that is not worth failing over.
 func TestAcceptsAFencedOrChattyReply(t *testing.T) {
 	c, _, _ := serve(t, http.StatusOK,
-		"{\"content\":[{\"type\":\"text\",\"text\":\"Here you go:\\n```json\\n[\\\"one\\\", \\\"two\\\"]\\n```\"}]}")
-	got, err := c.Sentences(context.Background(), facts())
+		"{\"content\":[{\"type\":\"text\",\"text\":\"Here you go:\\n```json\\n[{\\\"sentence\\\":\\\"one\\\",\\\"report\\\":\\\"first\\\"}, {\\\"sentence\\\":\\\"two\\\",\\\"report\\\":\\\"second\\\"}]\\n```\"}]}")
+	got, err := c.Rewrite(context.Background(), facts())
 	if err != nil {
-		t.Fatalf("Sentences: %v", err)
+		t.Fatalf("Rewrite: %v", err)
 	}
-	if len(got) != 2 || got[1] != "two" {
-		t.Errorf("sentences = %q", got)
+	if len(got) != 2 || got[1].Sentence != "two" || got[1].Report != "second" {
+		t.Errorf("rewrites = %+v", got)
 	}
 }
 
@@ -97,13 +100,17 @@ func TestFailuresAreReportedNotPaperedOver(t *testing.T) {
 		{"api error", http.StatusUnauthorized, `{"error":{"type":"authentication_error","message":"invalid x-api-key"}}`, "invalid x-api-key"},
 		{"not json at all", http.StatusOK, `<html>gateway</html>`, "unexpected reply"},
 		{"no array in the reply", http.StatusOK, `{"content":[{"type":"text","text":"I would rather not"}]}`, "JSON array"},
-		{"wrong number of sentences", http.StatusOK, `{"content":[{"type":"text","text":"[\"only one\"]"}]}`, "1 sentences for 2 projects"},
-		{"an empty sentence", http.StatusOK, `{"content":[{"type":"text","text":"[\"fine\", \"\"]"}]}`, "empty sentence"},
+		{"wrong number of entries", http.StatusOK, `{"content":[{"type":"text","text":"[{\"sentence\":\"only one\",\"report\":\"r\"}]"}]}`, "1 entries for 2 projects"},
+		{"an empty sentence", http.StatusOK, `{"content":[{"type":"text","text":"[{\"sentence\":\"fine\",\"report\":\"r\"},{\"sentence\":\"\",\"report\":\"r\"}]"}]}`, "empty sentence"},
+		{"an empty report", http.StatusOK, `{"content":[{"type":"text","text":"[{\"sentence\":\"a\",\"report\":\"r\"},{\"sentence\":\"b\",\"report\":\"\"}]"}]}`, "empty report"},
+		// The old reply shape, which a differently-prompted model might still produce.
+		{"an array of bare strings", http.StatusOK, `{"content":[{"type":"text","text":"[\"one\",\"two\"]"}]}`, "{sentence, report} objects"},
+		{"objects missing the report", http.StatusOK, `{"content":[{"type":"text","text":"[{\"sentence\":\"a\"},{\"sentence\":\"b\"}]"}]}`, "empty report"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _, _ := serve(t, tc.status, tc.body)
-			_, err := c.Sentences(context.Background(), facts())
+			_, err := c.Rewrite(context.Background(), facts())
 			if err == nil {
 				t.Fatal("no error")
 			}
@@ -116,7 +123,7 @@ func TestFailuresAreReportedNotPaperedOver(t *testing.T) {
 
 func TestNoKeySaysWhichVariableToSet(t *testing.T) {
 	c := New("", "")
-	_, err := c.Sentences(context.Background(), facts())
+	_, err := c.Rewrite(context.Background(), facts())
 	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
 		t.Errorf("error = %v, want it to name the environment variable", err)
 	}
@@ -124,12 +131,12 @@ func TestNoKeySaysWhichVariableToSet(t *testing.T) {
 
 func TestNothingToRewriteMakesNoRequest(t *testing.T) {
 	c, seen, _ := serve(t, http.StatusOK, `{"content":[{"type":"text","text":"[]"}]}`)
-	got, err := c.Sentences(context.Background(), nil)
+	got, err := c.Rewrite(context.Background(), nil)
 	if err != nil {
-		t.Fatalf("Sentences: %v", err)
+		t.Fatalf("Rewrite: %v", err)
 	}
 	if len(got) != 0 {
-		t.Errorf("sentences = %q, want none", got)
+		t.Errorf("rewrites = %+v, want none", got)
 	}
 	if len(*seen) != 0 {
 		t.Errorf("a request was made for an empty report: %s", *seen)
@@ -138,8 +145,8 @@ func TestNothingToRewriteMakesNoRequest(t *testing.T) {
 
 // Whatever else changes, this must not start sending transcripts.
 func TestOnlyTheDeclaredFactsAreSent(t *testing.T) {
-	c, seen, _ := serve(t, http.StatusOK, `{"content":[{"type":"text","text":"[\"a\",\"b\"]"}]}`)
-	if _, err := c.Sentences(context.Background(), facts()); err != nil {
+	c, seen, _ := serve(t, http.StatusOK, `{"content":[{"type":"text","text":"[{\"sentence\":\"a\",\"report\":\"r\"},{\"sentence\":\"b\",\"report\":\"r\"}]"}]}`)
+	if _, err := c.Rewrite(context.Background(), facts()); err != nil {
 		t.Fatal(err)
 	}
 	var req struct {
@@ -158,6 +165,10 @@ func TestOnlyTheDeclaredFactsAreSent(t *testing.T) {
 		"project": true, "agent": true, "status": true, "request": true, "agent_said": true,
 		"last_tool": true, "pending_tool": true, "progress": true, "age": true,
 		"heuristic_sentence": true,
+		// The paragraph's facts: counts and names, still nothing from tool output or file
+		// contents.
+		"span": true, "tools": true, "files": true, "turns": true, "errors": true,
+		"heuristic_report": true,
 	}
 	for _, entry := range sent {
 		for key := range entry {

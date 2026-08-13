@@ -282,17 +282,20 @@ func rewrite(projects []report.Project, model string, env Env, now time.Time) er
 
 	ctx, cancel := context.WithTimeout(context.Background(), smart.Timeout)
 	defer cancel()
-	sentences, err := client.Sentences(ctx, facts)
+	rewrites, err := client.Rewrite(ctx, facts)
 	if err != nil {
 		return err
 	}
 	for i := range projects {
-		projects[i].Lead.Sentence = sentences[i]
+		projects[i].Lead.Sentence = rewrites[i].Sentence
+		projects[i].Lead.Report = rewrites[i].Report
 		// Keep the session entry the project line came from in step, so --json does not
-		// contradict itself.
+		// contradict itself. Only the lead session is rewritten: a model call per session
+		// would turn one request into twenty.
 		for j := range projects[i].Sessions {
 			if projects[i].Sessions[j].Session == projects[i].Lead.Session {
-				projects[i].Sessions[j].Sentence = sentences[i]
+				projects[i].Sessions[j].Sentence = rewrites[i].Sentence
+				projects[i].Sessions[j].Report = rewrites[i].Report
 			}
 		}
 	}
@@ -322,6 +325,21 @@ func factsOf(p report.Project, now time.Time) smart.Facts {
 	if s.TodoTotal > 0 {
 		f.Progress = fmt.Sprintf("%d of %d done", s.TodoDone, s.TodoTotal)
 	}
+
+	// The paragraph's facts. Counts and file names, never file contents or tool output.
+	a := s.Activity
+	f.HeuristicReport = p.Lead.Report
+	f.Turns = a.Turns
+	f.Errors = a.Errors
+	f.Files = a.Files
+	if !a.First.IsZero() && a.Last.After(a.First) {
+		f.Span = render.Age(a.Last.Sub(a.First))
+	}
+	var tools []string
+	for _, t := range a.TopTools(5) {
+		tools = append(tools, fmt.Sprintf("%s (%d)", t.Name, t.Count))
+	}
+	f.Tools = strings.Join(tools, ", ")
 	return f
 }
 
