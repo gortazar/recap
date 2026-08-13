@@ -97,6 +97,10 @@ type Session struct {
 	// saying nothing.
 	Completed bool
 
+	// Activity is what the session did over the report window, filled by the readers. It is
+	// what the paragraph under the session line is written from.
+	Activity Activity
+
 	// Source is where this came from, for --verbose and for error messages.
 	Source string
 	// Unreadable explains why a session could not be parsed. A session with this set is
