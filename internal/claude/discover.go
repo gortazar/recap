@@ -35,7 +35,7 @@ func DefaultProjectsDir() string {
 //
 // A transcript whose size and modification time match a cached entry is taken from the
 // cache instead of being parsed again; pass a nil Cache to always parse.
-func Discover(projectsDir string, c Cache) ([]*session.Session, error) {
+func Discover(projectsDir string, c Cache, since time.Time) ([]*session.Session, error) {
 	if projectsDir == "" {
 		return nil, nil
 	}
@@ -66,7 +66,7 @@ func Discover(projectsDir string, c Cache) ([]*session.Session, error) {
 				sessions = append(sessions, s)
 				continue
 			}
-			s, err := ReadSession(path)
+			s, err := ReadSession(path, since)
 			if err == nil && c != nil {
 				if info, statErr := f.Info(); statErr == nil {
 					c.Store(path, info.Size(), info.ModTime(), s)

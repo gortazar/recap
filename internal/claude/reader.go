@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,12 +25,23 @@ const (
 	// tailBytes bounds the work per session. Transcripts reach tens of megabytes, and recap
 	// only ever needs the end of one; 512 KiB is many turns' worth.
 	tailBytes = 512 << 10
+
+	// maxFiles and maxRequests cap what a session contributes to the paragraph — and to the
+	// cache, which stores the whole Activity. A busy day touches hundreds of files; naming
+	// ten of them is already more than a paragraph can use.
+	maxFiles    = 10
+	maxRequests = 5
 )
 
 // ReadSession parses one transcript into a Session. It returns an error only if the file
 // cannot be read at all; a file whose contents make no sense yields a Session with
 // Unreadable set, so that one broken transcript cannot hide the others.
-func ReadSession(path string) (*session.Session, error) {
+//
+// since bounds the Activity: only records at or after it are counted towards what the
+// session did. A zero since means the whole transcript. It does not affect the status, which
+// always comes from the end of the transcript — "what is it doing now" is not a question
+// about the last 24 hours.
+func ReadSession(path string, since time.Time) (*session.Session, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -74,11 +86,13 @@ func ReadSession(path string) (*session.Session, error) {
 	// Tool calls waiting for a result, in the order they were made. A result removes its
 	// call; whatever is left at the end was never answered.
 	pending := map[string]string{}
+	activity := newActivity()
 	var lastConv *record
 	for i := range records {
 		rec := &records[i]
 		applyMetadata(s, rec)
-		if ts, ok := rec.time(); ok {
+		ts, hasTime := rec.time()
+		if hasTime {
 			if ts.After(s.LastActivity) {
 				s.LastActivity = ts
 			}
@@ -89,6 +103,21 @@ func ReadSession(path string) (*session.Session, error) {
 		if !rec.conversational() {
 			continue
 		}
+
+		// Whether this record counts towards "what did it do". A record with no timestamp
+		// cannot be placed in the window, so it is left out of the counts rather than
+		// guessed into them.
+		inWindow := hasTime && (since.IsZero() || !ts.Before(since))
+		if inWindow {
+			activity.saw(ts)
+			if rec.isAssistant() {
+				activity.turns++
+				if rec.Message != nil && rec.Message.Model == syntheticModel {
+					activity.errors++
+				}
+			}
+		}
+
 		for _, b := range rec.blocks() {
 			switch b.Type {
 			case "tool_use":
@@ -97,8 +126,14 @@ func ReadSession(path string) (*session.Session, error) {
 				if f := b.file(); f != "" {
 					s.LastFile = f
 				}
+				if inWindow {
+					activity.tool(b.Name, b.file())
+				}
 			case "tool_result":
 				delete(pending, b.ToolUseID)
+				if inWindow && b.failed() {
+					activity.errors++
+				}
 			case "text":
 				if rec.isAssistant() {
 					s.LastText = strings.TrimSpace(b.Text)
@@ -110,9 +145,13 @@ func ReadSession(path string) (*session.Session, error) {
 			if s.FirstRequest == "" {
 				s.FirstRequest = text
 			}
+			if inWindow {
+				activity.request(text)
+			}
 		}
 		lastConv = rec
 	}
+	s.Activity = activity.result()
 
 	if s.LastActivity.IsZero() {
 		// Some record types carry no timestamp at all, and a transcript can end on one.
@@ -283,6 +322,21 @@ type block struct {
 	Name      string          `json:"name"`
 	Input     json.RawMessage `json:"input"`
 	ToolUseID string          `json:"tool_use_id"`
+	Content   json.RawMessage `json:"content"`
+	IsError   bool            `json:"is_error"`
+}
+
+// failed reports whether a tool result carries an error. Claude Code marks these two ways
+// depending on where the failure came from, and both mean the same thing here.
+func (b block) failed() bool {
+	if b.IsError {
+		return true
+	}
+	var text string
+	if err := json.Unmarshal(b.Content, &text); err == nil {
+		return strings.Contains(text, "<tool_use_error>")
+	}
+	return false
 }
 
 func (b block) file() string {
@@ -386,4 +440,74 @@ var plumbingTag = regexp.MustCompile(`^<[a-zA-Z][a-zA-Z0-9_-]*>`)
 
 func isPlumbing(text string) bool {
 	return plumbingTag.MatchString(text)
+}
+
+// activityBuilder accumulates what a session did, keeping counts the paragraph needs and
+// capping the lists so a busy day cannot grow the cache without bound.
+type activityBuilder struct {
+	tools      map[string]int
+	fileCounts map[string]int
+	fileOrder  []string
+	requests   []string
+	turns      int
+	errors     int
+	first      time.Time
+	last       time.Time
+}
+
+func newActivity() *activityBuilder {
+	return &activityBuilder{tools: map[string]int{}, fileCounts: map[string]int{}}
+}
+
+func (b *activityBuilder) saw(ts time.Time) {
+	if b.first.IsZero() || ts.Before(b.first) {
+		b.first = ts
+	}
+	if ts.After(b.last) {
+		b.last = ts
+	}
+}
+
+func (b *activityBuilder) tool(name, file string) {
+	if name != "" {
+		b.tools[name]++
+	}
+	if file == "" {
+		return
+	}
+	// Basenames: a paragraph of absolute paths is unreadable, and the full path is already
+	// on the session as LastFile.
+	name = filepath.Base(file)
+	if _, seen := b.fileCounts[name]; !seen {
+		b.fileOrder = append(b.fileOrder, name)
+	}
+	b.fileCounts[name]++
+}
+
+func (b *activityBuilder) request(text string) {
+	b.requests = append(b.requests, text)
+	if len(b.requests) > maxRequests {
+		b.requests = b.requests[len(b.requests)-maxRequests:]
+	}
+}
+
+func (b *activityBuilder) result() session.Activity {
+	// Most-touched first, ties broken by the order they were first seen, so two runs over
+	// the same transcript produce the same paragraph.
+	files := append([]string(nil), b.fileOrder...)
+	sort.SliceStable(files, func(i, j int) bool {
+		return b.fileCounts[files[i]] > b.fileCounts[files[j]]
+	})
+	if len(files) > maxFiles {
+		files = files[:maxFiles]
+	}
+	return session.Activity{
+		Requests:   b.requests,
+		ToolCounts: b.tools,
+		Files:      files,
+		Turns:      b.turns,
+		Errors:     b.errors,
+		First:      b.first,
+		Last:       b.last,
+	}
 }

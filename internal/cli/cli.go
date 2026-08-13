@@ -193,7 +193,7 @@ func RunWith(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 
 	var sessions []*session.Session
-	claudeSessions, err := claude.Discover(env.ClaudeProjects, store)
+	claudeSessions, err := claude.Discover(env.ClaudeProjects, store, windowStart(filters, opts.Now))
 	if err != nil {
 		fmt.Fprintln(stderr, "recap: reading Claude Code sessions:", err)
 	}
@@ -335,6 +335,15 @@ func iconOverrides(icons map[string]string, stderr io.Writer) map[session.Status
 		out[st] = glyph
 	}
 	return out
+}
+
+// windowStart is when the report window opens: the point the readers collect activity from.
+// A zero time means "no window", which is what --all asks for.
+func windowStart(f report.Filters, now time.Time) time.Time {
+	if f.Since <= 0 {
+		return time.Time{}
+	}
+	return now.Add(-f.Since)
 }
 
 func parseAgent(name string) (session.Agent, error) {

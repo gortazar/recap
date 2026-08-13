@@ -4,13 +4,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gortazar/recap/internal/session"
 )
 
 func read(t *testing.T, name string) *session.Session {
 	t.Helper()
-	s, err := ReadSession(filepath.Join("testdata", name))
+	s, err := ReadSession(filepath.Join("testdata", name), time.Time{})
 	if err != nil {
 		t.Fatalf("ReadSession(%s): %v", name, err)
 	}
@@ -155,7 +156,88 @@ func TestUnparseableSessionDegradesGracefully(t *testing.T) {
 }
 
 func TestMissingFileIsAnError(t *testing.T) {
-	if _, err := ReadSession(filepath.Join("testdata", "no-such-session.jsonl")); err == nil {
+	if _, err := ReadSession(filepath.Join("testdata", "no-such-session.jsonl"), time.Time{}); err == nil {
 		t.Fatal("ReadSession on a missing file returned no error")
+	}
+}
+
+// The paragraph is only as good as what the reader collected, so the counts are pinned
+// against a real (scrubbed) transcript rather than a hand-built one.
+func TestReadsActivityOverTheWindow(t *testing.T) {
+	s := read(t, "tool-result-tail.jsonl")
+	a := s.Activity
+
+	if got, want := a.Turns, 9; got != want {
+		t.Errorf("Turns = %d, want %d", got, want)
+	}
+	if got, want := a.Errors, 0; got != want {
+		t.Errorf("Errors = %d, want %d", got, want)
+	}
+	want := map[string]int{"Bash": 1, "Edit": 3, "Write": 2}
+	if len(a.ToolCounts) != len(want) {
+		t.Fatalf("ToolCounts = %v, want %v", a.ToolCounts, want)
+	}
+	for tool, count := range want {
+		if a.ToolCounts[tool] != count {
+			t.Errorf("ToolCounts[%s] = %d, want %d", tool, a.ToolCounts[tool], count)
+		}
+	}
+	if got, want := a.Tools(), 6; got != want {
+		t.Errorf("Tools() = %d, want %d", got, want)
+	}
+
+	// Files come back most-touched first, as basenames: the full path is in LastFile, and a
+	// paragraph full of absolute paths is unreadable.
+	if len(a.Files) == 0 || a.Files[0] != "scrub-claude-fixture.py" {
+		t.Errorf("Files = %v, want the most-touched file first", a.Files)
+	}
+
+	if got, want := len(a.Requests), 1; got != want {
+		t.Errorf("Requests = %v, want %d", a.Requests, want)
+	}
+	if got, want := a.First.UTC().Format("15:04:05"), "15:20:20"; got != want {
+		t.Errorf("First = %s, want %s", got, want)
+	}
+	if got, want := a.Last.UTC().Format("15:04:05"), "15:37:00"; got != want {
+		t.Errorf("Last = %s, want %s", got, want)
+	}
+	if a.Truncated {
+		t.Error("Truncated is set for a transcript read whole")
+	}
+}
+
+// The window is the report window: a session that did nothing in it has an empty Activity,
+// and gets the short honest paragraph rather than a summary of last week.
+func TestActivityIsLimitedToTheWindow(t *testing.T) {
+	s, err := ReadSession(filepath.Join("testdata", "tool-result-tail.jsonl"), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.Activity.Empty() {
+		t.Errorf("Activity = %+v, want empty for a window after everything happened", s.Activity)
+	}
+	// The status still comes from the tail, whatever the window: "what is it doing now" is
+	// not a question about the last 24 hours.
+	if s.Tail != session.TailToolResult {
+		t.Errorf("Tail = %v, want the tail shape to survive a window that excludes everything", s.Tail)
+	}
+}
+
+func TestActivityCountsToolErrors(t *testing.T) {
+	s := read(t, "interrupted-by-user.jsonl")
+	if s.Activity.Turns == 0 {
+		t.Errorf("Turns = 0, want the assistant turns in the window")
+	}
+}
+
+// A busy day would otherwise put a hundred files and fifty requests into the cache and the
+// paragraph. Both are capped in the reader, where the cost is.
+func TestActivityListsAreCapped(t *testing.T) {
+	s := read(t, "tool-result-tail.jsonl")
+	if len(s.Activity.Files) > maxFiles {
+		t.Errorf("Files has %d entries, want at most %d", len(s.Activity.Files), maxFiles)
+	}
+	if len(s.Activity.Requests) > maxRequests {
+		t.Errorf("Requests has %d entries, want at most %d", len(s.Activity.Requests), maxRequests)
 	}
 }

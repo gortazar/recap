@@ -38,7 +38,7 @@ func TestDiscoverReadsEverySessionInEveryProject(t *testing.T) {
 		"-home-user-git-beta/notes.txt": "stub.jsonl",
 	})
 
-	sessions, err := Discover(root, nil)
+	sessions, err := Discover(root, nil, time.Time{})
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestDiscoverKeepsGoingPastABrokenSession(t *testing.T) {
 		"-home-user-git-alpha/bad.jsonl":  "stub.jsonl",
 	})
 
-	sessions, err := Discover(root, nil)
+	sessions, err := Discover(root, nil, time.Time{})
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestDiscoverKeepsGoingPastABrokenSession(t *testing.T) {
 }
 
 func TestDiscoverOfAMissingDirectoryIsNotAnError(t *testing.T) {
-	sessions, err := Discover(filepath.Join(t.TempDir(), "no-claude-here"), nil)
+	sessions, err := Discover(filepath.Join(t.TempDir(), "no-claude-here"), nil, time.Time{})
 	if err != nil {
 		t.Fatalf("Discover of a missing directory: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestDiscoverUsesTheCacheAndFillsIt(t *testing.T) {
 	})
 
 	c := &countingCache{}
-	if _, err := Discover(root, c); err != nil {
+	if _, err := Discover(root, c, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if c.stores != 2 {
@@ -129,7 +129,7 @@ func TestDiscoverUsesTheCacheAndFillsIt(t *testing.T) {
 
 	// Second run: everything is a hit, and the sessions still come back.
 	before := c.lookups
-	sessions, err := Discover(root, c)
+	sessions, err := Discover(root, c, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
