@@ -22,9 +22,22 @@ import (
 const (
 	// headBytes is enough to find the session's first user request and its metadata.
 	headBytes = 64 << 10
-	// tailBytes bounds the work per session. Transcripts reach tens of megabytes, and recap
-	// only ever needs the end of one; 512 KiB is many turns' worth.
+	// tailBytes is the minimum read: enough of the end of a transcript to decide the status,
+	// whatever the report window is.
 	tailBytes = 512 << 10
+	// chunkBytes is how much more is read at a time when the window needs more than the
+	// minimum.
+	chunkBytes = 512 << 10
+	// maxTailBytes is the hard cap on how much of one transcript is read. Reading a day
+	// instead of a tail multiplies the work by the number of transcripts, and a pathological
+	// one would otherwise turn a 150 ms command into a slow one. When the cap bites, the
+	// Activity is marked Truncated and the paragraph says what it really covers rather than
+	// implying it saw the whole window.
+	//
+	// 1 MiB, not the 4 MiB first tried: measured over this machine's 25 projects, 4 MiB cost
+	// nothing on the default 24h window (most sessions are covered long before the cap) but
+	// made --all take 0.93s against 0.33s. A megabyte is still around a thousand records.
+	maxTailBytes = 1 << 20
 
 	// maxFiles and maxRequests cap what a session contributes to the paragraph — and to the
 	// cache, which stores the whole Activity. A busy day touches hundreds of files; naming
@@ -46,7 +59,7 @@ func ReadSession(path string, since time.Time) (*session.Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	head, tail, err := readEnds(path, info.Size())
+	head, tail, truncated, err := readEnds(path, info.Size(), since)
 	if err != nil {
 		return nil, err
 	}
@@ -87,6 +100,7 @@ func ReadSession(path string, since time.Time) (*session.Session, error) {
 	// call; whatever is left at the end was never answered.
 	pending := map[string]string{}
 	activity := newActivity()
+	activity.truncated = truncated
 	var lastConv *record
 	for i := range records {
 		rec := &records[i]
@@ -237,25 +251,27 @@ func applyMetadata(s *session.Session, rec *record) {
 	}
 }
 
-// readEnds returns the first headBytes and last tailBytes of the file, each trimmed to whole
-// lines. For a file small enough to be covered by the tail window, head is empty and tail is
-// everything, so no record is counted twice.
-func readEnds(path string, size int64) (head, tail []byte, err error) {
+// readEnds returns the first headBytes of the file and as much of its end as the window
+// needs, each trimmed to whole lines. For a file small enough to be read whole, head is
+// empty and tail is everything, so no record is counted twice.
+//
+// truncated reports that the cap was reached before the window was covered.
+func readEnds(path string, size int64, since time.Time) (head, tail []byte, truncated bool, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	defer f.Close()
 
 	if size <= tailBytes {
 		all, err := io.ReadAll(f)
-		return nil, all, err
+		return nil, all, false, err
 	}
 
 	head = make([]byte, headBytes)
 	n, err := io.ReadFull(f, head)
 	if err != nil && err != io.ErrUnexpectedEOF {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	head = head[:n]
 	// Drop the trailing partial line.
@@ -263,15 +279,81 @@ func readEnds(path string, size int64) (head, tail []byte, err error) {
 		head = head[:i]
 	}
 
-	tail = make([]byte, tailBytes)
-	if _, err := f.ReadAt(tail, size-tailBytes); err != nil && err != io.EOF {
-		return nil, nil, err
+	tail, truncated, err = readBackwards(f, size, since)
+	return head, tail, truncated, err
+}
+
+// readBackwards reads the end of the file in chunks until it has covered the window, run out
+// of file, or hit the cap.
+//
+// Records are written in order, so the oldest record read so far is the first one in the
+// buffer: checking that alone is enough to know whether the window is covered, which keeps
+// this O(chunks) rather than re-parsing everything each round.
+func readBackwards(f *os.File, size int64, since time.Time) (tail []byte, truncated bool, err error) {
+	offset := size
+	var buf []byte
+
+	for {
+		want := int64(chunkBytes)
+		if offset < want {
+			want = offset
+		}
+		offset -= want
+
+		chunk := make([]byte, want)
+		if _, err := f.ReadAt(chunk, offset); err != nil && err != io.EOF {
+			return nil, false, err
+		}
+		buf = append(chunk, buf...)
+
+		if offset == 0 {
+			// The whole file: nothing was missed, whatever the window asked for.
+			return buf, false, nil
+		}
+		// Everything from here on is judged on whole lines only; the first line of the
+		// buffer is a fragment of a record that starts earlier in the file.
+		trimmed := buf
+		if i := bytes.IndexByte(trimmed, '\n'); i >= 0 {
+			trimmed = trimmed[i+1:]
+		}
+
+		if len(trimmed) >= tailBytes && coversWindow(trimmed, since) {
+			return trimmed, false, nil
+		}
+		if len(buf) >= maxTailBytes {
+			return trimmed, true, nil
+		}
 	}
-	// Drop the leading partial line.
-	if i := bytes.IndexByte(tail, '\n'); i >= 0 {
-		tail = tail[i+1:]
+}
+
+// coversWindow reports whether the buffer reaches back past the start of the window. A zero
+// since means there is no window to cover, so the cap is what stops the read.
+func coversWindow(buf []byte, since time.Time) bool {
+	if since.IsZero() {
+		return false
 	}
-	return head, tail, nil
+	ts, ok := firstTimestamp(buf)
+	return ok && ts.Before(since)
+}
+
+// firstTimestamp is the timestamp of the earliest record in the buffer. Bookkeeping records
+// carry none, so it scans forward until it finds one — over a bounded number of lines, since
+// a run of untimestamped records is short.
+func firstTimestamp(buf []byte) (time.Time, bool) {
+	const maxLines = 50
+	for i, line := range bytes.SplitN(buf, []byte{'\n'}, maxLines+1) {
+		if i == maxLines {
+			break
+		}
+		var rec record
+		if err := json.Unmarshal(line, &rec); err != nil {
+			continue
+		}
+		if ts, ok := rec.time(); ok {
+			return ts, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func parseLines(b []byte) []record {
@@ -307,6 +389,10 @@ type record struct {
 	Message     *message `json:"message"`
 	AITitle     string   `json:"aiTitle"`
 	CustomTitle string   `json:"customTitle"`
+
+	// Filled by blocks() the first time it is called.
+	cachedBlocks []block
+	parsed       bool
 }
 
 type message struct {
@@ -379,19 +465,27 @@ func (r *record) time() (time.Time, bool) {
 	return ts, true
 }
 
+// blocks parses the record's content, once. Several callers want it — the activity counts,
+// the request extraction, the tail classification — and unmarshalling a tool result twice is
+// pure cost: with a day's window rather than a tail, this is the hot path.
 func (r *record) blocks() []block {
+	if r.parsed {
+		return r.cachedBlocks
+	}
+	r.parsed = true
 	if r.Message == nil || len(r.Message.Content) == 0 {
 		return nil
 	}
 	var bs []block
 	if err := json.Unmarshal(r.Message.Content, &bs); err == nil {
+		r.cachedBlocks = bs
 		return bs
 	}
 	var s string
 	if err := json.Unmarshal(r.Message.Content, &s); err == nil {
-		return []block{{Type: "text", Text: s}}
+		r.cachedBlocks = []block{{Type: "text", Text: s}}
 	}
-	return nil
+	return r.cachedBlocks
 }
 
 // text joins the record's prose. The bool reports whether there was any.
@@ -453,6 +547,7 @@ type activityBuilder struct {
 	errors     int
 	first      time.Time
 	last       time.Time
+	truncated  bool
 }
 
 func newActivity() *activityBuilder {
@@ -509,5 +604,6 @@ func (b *activityBuilder) result() session.Activity {
 		Errors:     b.errors,
 		First:      b.first,
 		Last:       b.last,
+		Truncated:  b.truncated,
 	}
 }
