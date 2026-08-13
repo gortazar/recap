@@ -25,11 +25,81 @@ Supported agents:
 ## Install
 
 ```sh
-nix build          # ./result/bin/recap
-nix run . -- --help
+curl -fsSL https://raw.githubusercontent.com/gortazar/recap/main/install.sh | sh
 ```
 
-Or with a Go toolchain: `go build ./cmd/recap`.
+Piping a script from the internet into a shell deserves the alternative in full, so here it
+is with equal billing:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/gortazar/recap/main/install.sh -o install.sh
+less install.sh
+sh install.sh
+```
+
+Either way it installs into `~/.local/bin`, so it never needs `sudo`, and re-running it
+upgrades in place.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RECAP_VERSION` | the latest release | install this exact version. Also the way past GitHub's unauthenticated API rate limit (60 requests an hour per IP), which is what you have hit if the script says it could not ask for the latest release |
+| `RECAP_INSTALL_DIR` | `$HOME/.local/bin` | where to put the binary. Created if absent |
+
+The script checks for `curl` and `tar` up front, downloads the tarball and `SHA256SUMS`,
+and **verifies the checksum before unpacking anything**, so a bad download never becomes
+files on disk. Be clear about what that does and does not prove: the checksums are served
+from the same release as the binary, so it detects a corrupted or truncated download, not a
+compromised release. There is no signing — no key exists.
+
+### Supported platforms
+
+| | amd64 | arm64 |
+|---|---|---|
+| Linux | ✅ | ✅ |
+| macOS | ✅ | ✅ |
+| Windows | ✗ | ✗ |
+
+Windows is out: recap reads `/proc` and unix paths. On anything else the installer refuses
+and points at the source builds below, rather than installing a binary that cannot run. The
+darwin binaries are cross-compiled on Linux; each release's smoke test installs and runs
+them on a macOS runner, which is the only time they are executed before you get them.
+
+### With Nix
+
+```sh
+nix profile install github:gortazar/recap
+nix run github:gortazar/recap -- --help
+```
+
+### From source
+
+```sh
+git clone https://github.com/gortazar/recap && cd recap
+go build ./cmd/recap
+```
+
+`go install github.com/gortazar/recap/cmd/recap@latest` works too — the module path and the
+repository agree — though `@latest` needs a published version tag, so use `@main` until the
+first release exists. Neither source route stamps the version: both report `dev`.
+
+### Check what you got
+
+```sh
+recap --version      # recap 0.2 (commit 1a2b3c4, built 2026-08-10T09:00:00Z)
+```
+
+A build nobody stamped says `recap dev (commit unknown, built unknown)`. That is a local
+`go build`, not a release.
+
+### Uninstall
+
+```sh
+rm ~/.local/bin/recap
+rm -rf ~/.cache/recap          # the parsed-session cache
+rm -rf ~/.config/recap         # the config file, if you made one
+```
+
+recap writes nothing else, and never touches the agents' own directories.
 
 ## Usage
 
@@ -225,14 +295,51 @@ go build ./cmd/recap
 tools/screenshot.sh   # regenerate screenshots/recap.svg
 ```
 
-CI (`.github/workflows/ci-recap.yml`) runs `nix flake check`, which builds the binary, runs
-`go test ./...` and enforces `gofmt`. To reproduce it exactly:
+CI (`.github/workflows/ci.yml`) runs `nix flake check` — which builds the binary, runs
+`go test ./...` and enforces `gofmt` — and then the shell suites: `tools/lint-shell.sh`,
+`tools/check_release_version_test.sh`, `tools/release_build_test.sh` and
+`tools/install_test.sh`. The last two cover the parts that would otherwise only be exercised
+by a release going wrong.
+
+To reproduce the Go part exactly:
 
 ```sh
 nix flake check --print-build-logs
 ```
 
 A flake only sees git-tracked files: `git add` new files before running it.
+
+### Cutting a release
+
+A human pushes the tag; nothing in CI creates one.
+
+1. Bump `version` in `flake.nix` — the one place it is written down, and what
+   `tools/read-version.sh` hands to everything else.
+2. Commit that and push it.
+3. Tag and push the tag:
+
+   ```sh
+   git tag v0.2 && git push origin v0.2
+   ```
+
+The `Release` workflow then checks the tag against `flake.nix`, builds the four tarballs and
+`SHA256SUMS`, publishes them with `gh release create --generate-notes`, and finally installs
+the published one-liner on an ubuntu and a macOS runner, asserting `recap --version` reports
+the version just released.
+
+To rehearse without publishing, run the workflow by hand (**Actions → Release → Run
+workflow**): it does everything up to the publishing step and attaches the artefacts to the
+run instead.
+
+Two settings can make it fail through no fault of the code:
+
+- **The repository's Actions token is read-only**, and `gh release create` gets a 403.
+  Settings → Actions → General → Workflow permissions → *Read and write permissions*.
+- **The tag does not match `version` in `flake.nix`.** That is the guard doing its job; fix
+  whichever of the two is wrong and re-tag.
+
+Worth knowing: this repository has no `LICENSE`, so the release tarballs ship the binary and
+this README only. Adding one is a decision for its owner, not for the release process.
 
 `docs/session-formats.md` is the write-up of both on-disk formats — what recap keys on,
 which fields are reliable, and what would invalidate the status rules. Read it first if a
