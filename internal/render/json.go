@@ -14,6 +14,12 @@ import (
 // consumer that does not recognise the version should say so rather than guess.
 //
 // Version 1: the document below.
+//
+// The version bumps when a field is removed, renamed, or changes meaning — never when an
+// optional one is added. 0.3 added `report` and `activity` to every session and project and
+// deliberately left the version at 1: every field a version-1 consumer reads is still there,
+// unchanged, so bumping would have made recap-gs report an incompatible recap in exchange
+// for nothing.
 const SchemaVersion = 1
 
 // Document is what --json prints.
@@ -33,6 +39,7 @@ type jsonProject struct {
 	Status       string        `json:"status"`
 	Icon         string        `json:"icon"`
 	Recap        string        `json:"recap"`
+	Report       string        `json:"report,omitempty"`
 	Agents       []string      `json:"agents"`
 	LastActivity time.Time     `json:"last_activity"`
 	Sessions     []jsonSession `json:"sessions"`
@@ -57,6 +64,41 @@ type jsonSession struct {
 	TodoTotal    int       `json:"todo_total,omitempty"`
 	Source       string    `json:"source,omitempty"`
 	Unreadable   string    `json:"unreadable,omitempty"`
+
+	// Report is the paragraph, and Activity the counts it was built from, so a consumer can
+	// render its own version rather than parsing prose back apart.
+	Report   string        `json:"report,omitempty"`
+	Activity *jsonActivity `json:"activity,omitempty"`
+}
+
+// jsonActivity is what a session did over the report window.
+type jsonActivity struct {
+	ToolCounts  map[string]int `json:"tool_counts,omitempty"`
+	Files       []string       `json:"files,omitempty"`
+	Requests    []string       `json:"requests,omitempty"`
+	Turns       int            `json:"turns,omitempty"`
+	Errors      int            `json:"errors,omitempty"`
+	WindowStart time.Time      `json:"window_start,omitempty"`
+	WindowEnd   time.Time      `json:"window_end,omitempty"`
+	// Truncated says the reader hit its cap before reaching the start of the window, so
+	// these counts cover from window_start onwards and no earlier.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+func activityOf(a session.Activity) *jsonActivity {
+	if a.Empty() {
+		return nil
+	}
+	return &jsonActivity{
+		ToolCounts:  a.ToolCounts,
+		Files:       a.Files,
+		Requests:    a.Requests,
+		Turns:       a.Turns,
+		Errors:      a.Errors,
+		WindowStart: a.First,
+		WindowEnd:   a.Last,
+		Truncated:   a.Truncated,
+	}
 }
 
 // LivenessSource describes where liveness came from, for the document's liveness field.
@@ -83,6 +125,7 @@ func JSON(w io.Writer, projects []report.Project, opts Options, liveness string)
 			Status:       p.Status().Word(),
 			Icon:         opts.icon(p.Status()),
 			Recap:        p.Lead.Sentence,
+			Report:       p.Lead.Report,
 			Agents:       agentStrings(p.Agents),
 			LastActivity: p.LastActivity,
 			Sessions:     make([]jsonSession, 0, len(p.Sessions)),
@@ -119,6 +162,8 @@ func jsonSessionOf(e report.Entry, opts Options) jsonSession {
 		TodoTotal:    s.TodoTotal,
 		Source:       s.Source,
 		Unreadable:   s.Unreadable,
+		Report:       e.Report,
+		Activity:     activityOf(s.Activity),
 	}
 }
 
