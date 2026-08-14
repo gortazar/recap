@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -403,21 +402,6 @@ func parseAgent(name string) (session.Agent, error) {
 
 // parseDuration is time.ParseDuration plus days, which is the unit you actually reach for
 // when asking what happened while you were away.
-func parseDuration(s string) (time.Duration, error) {
-	if rest, ok := strings.CutSuffix(strings.TrimSpace(s), "d"); ok {
-		days, err := strconv.ParseFloat(rest, 64)
-		if err != nil {
-			return 0, fmt.Errorf("not a duration")
-		}
-		return time.Duration(days * float64(24*time.Hour)), nil
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return 0, fmt.Errorf("not a duration")
-	}
-	return d, nil
-}
-
 // repeatable collects a flag that may be given more than once.
 type repeatable []string
 
