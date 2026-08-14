@@ -473,3 +473,134 @@ func TestVerboseAddsSessionLines(t *testing.T) {
 		t.Errorf("-v did not add a session line:\n%s", stdout)
 	}
 }
+
+// Every rejection has to show what would have been accepted, and blame the place the value
+// was actually written.
+func TestSinceMistakesAreExplained(t *testing.T) {
+	env := testEnv(t)
+	transcript(t, env.ClaudeProjects, "/home/user/git/alpha", "s1", time.Hour)
+
+	for _, c := range []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"-since", "yesterday"}, []string{`--since "yesterday"`, "6h, 90m or 7d", "s, m, h, d, w"}},
+		{[]string{"-since", "6"}, []string{`--since "6"`, "6h, 90m or 7d"}},
+		{[]string{"-since", "09:00"}, []string{`--since "09:00"`, "6h, 90m or 7d"}},
+	} {
+		code, stdout, stderr := run(t, env, c.args...)
+		if code != 2 {
+			t.Errorf("%v: exit %d, want 2", c.args, code)
+		}
+		if stdout != "" {
+			t.Errorf("%v: printed a report despite a bad window:\n%s", c.args, stdout)
+		}
+		for _, want := range c.want {
+			if !strings.Contains(stderr, want) {
+				t.Errorf("%v: stderr = %q, want it to mention %q", c.args, stderr, want)
+			}
+		}
+	}
+}
+
+// A bad value in the config file is not the flag's fault, and saying "--since" would send
+// the reader looking in the wrong place.
+func TestABadSinceInTheConfigFileNamesTheFileAndTheKey(t *testing.T) {
+	env := testEnv(t)
+	env.ConfigPath = configFile(t, "since = \"yesterday\"\n")
+	transcript(t, env.ClaudeProjects, "/home/user/git/alpha", "s1", time.Hour)
+
+	code, _, stderr := run(t, env)
+	if code != 2 {
+		t.Errorf("exit %d, want 2", code)
+	}
+	if !strings.Contains(stderr, env.ConfigPath) {
+		t.Errorf("stderr = %q, want it to name the config file", stderr)
+	}
+	if !strings.Contains(stderr, `since "yesterday"`) {
+		t.Errorf("stderr = %q, want it to name the key and the value", stderr)
+	}
+	if strings.Contains(stderr, "--since") {
+		t.Errorf("stderr = %q, want it not to blame the flag for a line in a file", stderr)
+	}
+}
+
+// The one behaviour change in 0.4: a zero or negative window used to be a silent --all,
+// because the filter simply skipped a window that was not positive.
+func TestAZeroOrNegativeWindowIsAnError(t *testing.T) {
+	env := testEnv(t)
+	transcript(t, env.ClaudeProjects, "/home/user/git/alpha", "s1", 40*time.Hour)
+
+	for _, args := range [][]string{
+		{"-since", "0h"},
+		{"-since", "-6h"},
+		{"-since=-6h"},
+		{"-since", "0s"},
+	} {
+		code, stdout, stderr := run(t, env, args...)
+		if code != 2 {
+			t.Errorf("%v: exit %d, want 2 — a non-positive window used to be a silent --all", args, code)
+		}
+		if stdout != "" {
+			t.Errorf("%v: printed a report:\n%s", args, stdout)
+		}
+		if !strings.Contains(stderr, "must be positive") || !strings.Contains(stderr, "--all") {
+			t.Errorf("%v: stderr = %q, want it to say the window must be positive and name --all", args, stderr)
+		}
+	}
+
+	// And the flag that does what they probably meant still works.
+	code, stdout, _ := run(t, env, "-all")
+	if code != 0 || !strings.Contains(stdout, "alpha") {
+		t.Errorf("--all after all that: exit %d, output:\n%s", code, stdout)
+	}
+}
+
+func TestASincePinnedInTheConfigFileMustAlsoBePositive(t *testing.T) {
+	env := testEnv(t)
+	env.ConfigPath = configFile(t, "since = \"0\"\n")
+	transcript(t, env.ClaudeProjects, "/home/user/git/alpha", "s1", time.Hour)
+
+	code, _, stderr := run(t, env)
+	if code != 2 {
+		t.Errorf("exit %d, want 2", code)
+	}
+	if !strings.Contains(stderr, env.ConfigPath) {
+		t.Errorf("stderr = %q, want it to name the config file", stderr)
+	}
+}
+
+// The forms the idea actually asked for, end to end.
+func TestSinceHoursAndDays(t *testing.T) {
+	env := testEnv(t)
+	transcript(t, env.ClaudeProjects, "/home/user/git/recent", "s1", 8*time.Hour)
+	transcript(t, env.ClaudeProjects, "/home/user/git/older", "s2", 3*24*time.Hour)
+
+	_, stdout, _ := run(t, env, "-since", "6h")
+	if strings.Contains(stdout, "recent") || strings.Contains(stdout, "older") {
+		t.Errorf("--since 6h showed a session touched 8 hours ago:\n%s", stdout)
+	}
+
+	_, stdout, _ = run(t, env, "-since", "12h")
+	if !strings.Contains(stdout, "recent") {
+		t.Errorf("--since 12h hid a session touched 8 hours ago:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "older") {
+		t.Errorf("--since 12h showed a session touched 3 days ago:\n%s", stdout)
+	}
+
+	_, stdout, _ = run(t, env, "-since", "7d")
+	for _, want := range []string{"recent", "older"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("--since 7d hid %s:\n%s", want, stdout)
+		}
+	}
+
+	// The same window, spelled the ways the new grammar allows.
+	for _, spelling := range []string{"7d", "1w", "168h", "6d24h", "7D"} {
+		_, spelled, _ := run(t, env, "-since", spelling)
+		if !strings.Contains(spelled, "older") {
+			t.Errorf("--since %s did not cover 3 days:\n%s", spelling, spelled)
+		}
+	}
+}

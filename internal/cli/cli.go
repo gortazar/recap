@@ -182,13 +182,18 @@ func RunWith(args []string, stdout, stderr io.Writer, env Env) int {
 		filters.Roots = *root
 	}
 	if !*all {
-		window := *since
+		// Where the value came from decides how a mistake in it is reported: blaming
+		// --since for a line in a config file sends the reader to the wrong place.
+		window, source := *since, "--since"
 		if !set["since"] && cfg.Since != "" {
-			window = cfg.Since
+			window, source = cfg.Since, env.ConfigPath+": since"
 		}
 		d, err := parseDuration(window)
+		if err == nil {
+			err = positiveWindow(d)
+		}
 		if err != nil {
-			fmt.Fprintf(stderr, "recap: --since %q: %v\n", window, err)
+			fmt.Fprintf(stderr, "recap: %s %q: %v\n", source, window, err)
 			return 2
 		}
 		filters.Since = d
@@ -378,6 +383,18 @@ func terminalWidth() int {
 		return width
 	}
 	return 0
+}
+
+// positiveWindow rejects a window that is zero or negative.
+//
+// Before this, FilterSessions simply skipped the window when it was not positive, so
+// `--since 0` was a silent --all: quiet, surprising, and easy to leave in a config file for
+// months. The message names the flag the user probably meant.
+func positiveWindow(d time.Duration) error {
+	if d <= 0 {
+		return fmt.Errorf("a window must be positive; use --all for no window")
+	}
+	return nil
 }
 
 // windowStart is when the report window opens: the point the readers collect activity from.
