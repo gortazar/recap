@@ -25,7 +25,15 @@ const usage = `recap — what were my coding agents doing?
 
 Usage: recap [flags]
 
-Prints one line per project with the status of its most recent agent session.
+Prints one line per project with the status of its most recent agent session, and a
+paragraph of what it did.
+
+Examples:
+  recap                 what happened in the last 24 hours
+  recap --since 6h      just this morning
+  recap --since 7d      the past week
+  recap --all           everything, however old
+  recap --running       only what is working right now
 
 Flags:
 `
@@ -90,7 +98,7 @@ func RunWith(args []string, stdout, stderr io.Writer, env Env) int {
 	fs.Usage = func() {}
 
 	var (
-		since    = fs.String("since", "24h", "hide sessions untouched for longer than this (e.g. 90m, 2d)")
+		since    = fs.String("since", "24h", "how far back to look: a number and a unit (s, m, h, d, w), chainable — 6h, 90m, 7d, 2w, 2d12h")
 		all      = fs.Bool("all", false, "ignore the time window")
 		agent    = fs.String("agent", "", "only this agent: claude or opencode")
 		project  = fs.String("project", "", "only this project, by name")

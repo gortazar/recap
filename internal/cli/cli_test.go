@@ -604,3 +604,14 @@ func TestSinceHoursAndDays(t *testing.T) {
 		}
 	}
 }
+
+// The help text is where someone looks after a rejected --since, so it has to name the same
+// vocabulary the error message does.
+func TestHelpNamesTheDurationUnitsAndShowsAnExample(t *testing.T) {
+	_, stdout, _ := run(t, testEnv(t), "--help")
+	for _, want := range []string{"s, m, h, d, w", "--since 6h", "--since 7d", "2d12h"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("--help does not mention %q:\n%s", want, stdout)
+		}
+	}
+}

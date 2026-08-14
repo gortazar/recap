@@ -105,6 +105,8 @@ recap writes nothing else, and never touches the agents' own directories.
 
 ```
 recap                    # what happened in the last 24 hours
+recap --since 6h         # just this morning
+recap --since 7d         # the past week
 recap --all              # ignore the time window
 recap --running          # only what is working right now
 recap -v                 # a line per session under each project
@@ -135,6 +137,35 @@ Several sessions in one directory collapse into one line, and the busiest of the
 what that line says — a project with something still running is never reported as idle.
 `-v` breaks it back out into a line per session, each with its own paragraph.
 
+### Durations
+
+`--since` takes a number and a unit, and nothing else:
+
+| Unit | | Examples |
+|---|---|---|
+| `s` | seconds | `30s` |
+| `m` | minutes | `90m` |
+| `h` | hours | `6h`, `1.5h` |
+| `d` | days (24 hours) | `7d`, `1.5d` |
+| `w` | weeks (7 days) | `2w` |
+
+Terms chain, and case does not matter: `2d12h`, `1w2d`, `6H` all work. A day is always 24
+hours and a week always 7 days — no calendar arithmetic, so `1w` is the same length whatever
+the month or the daylight saving.
+
+There is no `mo` or `y`: a month would have to choose between 30 days and a calendar month,
+and a month of sessions is what `--all` is for.
+
+Two things are deliberately *not* accepted:
+
+- **A bare number.** `--since 6` is an error, because six is as likely to have meant days as
+  hours. Say `6h` or `6d`.
+- **A point in time.** `--since 09:00`, `--since yesterday` and `--since 2026-08-10` are all
+  errors: `--since` is relative only.
+
+A window has to be positive. `--since 0` is an error rather than a silent `--all`, which is
+what it used to be.
+
 ### The paragraph
 
 It covers the **report window** — the same one `--since` sets, 24 hours by default — so
@@ -160,7 +191,7 @@ false` in the config file does the same permanently.
 
 | Flag | Meaning |
 |---|---|
-| `--since <duration>` | hide sessions untouched for longer than this (default `24h`; understands `90m`, `2d`) |
+| `--since <duration>` | how far back to look (default `24h`) — see [durations](#durations) |
 | `--all` | ignore the time window |
 | `--agent claude\|opencode` | only one agent's sessions |
 | `--project <name>` | only this project |
@@ -208,7 +239,7 @@ Optional, at `~/.config/recap/config.toml` (or `$XDG_CONFIG_HOME/recap/config.to
 **Command-line flags always win over the file.**
 
 ```toml
-since  = "12h"                       # default time window
+since  = "12h"                       # default window, same grammar as --since (see Durations)
 roots  = ["~/git", "~/work"]         # only report projects under these
 ignore = ["~/git/scratch"]           # ...except these
 icons  = true                        # false is the same as always passing --no-icons
