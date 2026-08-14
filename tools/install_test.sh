@@ -72,7 +72,11 @@ check "resolved the version from the API without being told" \
 
 # --- a corrupted download -----------------------------------------------------------------
 cp "$work/dl/v$version/SHA256SUMS" "$work/good-sums"
-sed 's/^[0-9a-f]/0/' "$work/good-sums" > "$work/dl/v$version/SHA256SUMS"
+# Replace every hash with 64 zeros, which no file has. The obvious "change the first
+# character" trick is a no-op whenever that character is already what you changed it to —
+# it silently stopped corrupting anything the day a release hash happened to start with 0,
+# and this test passed while verifying nothing.
+awk '{ printf "%064d  %s\n", 0, $2 }' "$work/good-sums" > "$work/dl/v$version/SHA256SUMS"
 out="$(run_install "$work/home2")"
 contains "a checksum mismatch is reported" "$out" "checksum mismatch"
 check "a checksum mismatch installs nothing" \

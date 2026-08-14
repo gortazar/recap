@@ -85,7 +85,7 @@ first release exists. Neither source route stamps the version: both report `dev`
 ### Check what you got
 
 ```sh
-recap --version      # recap 0.3 (commit 1a2b3c4, built 2026-08-13T21:00:00Z)
+recap --version      # recap 0.4 (commit 1a2b3c4, built 2026-08-14T09:00:00Z)
 ```
 
 A build nobody stamped says `recap dev (commit unknown, built unknown)`. That is a local
@@ -408,7 +408,7 @@ A human pushes the tag; nothing in CI creates one.
 3. Tag and push the tag:
 
    ```sh
-   git tag v0.3 && git push origin v0.3
+   git tag v0.4 && git push origin v0.4
    ```
 
 The `Release` workflow then checks the tag against `flake.nix`, builds the four tarballs and
